@@ -1,0 +1,3 @@
+[submodule "gismondi-canada-wines"]
+	path = gismondi-canada-wines
+	url = https://github.com/SUM-AI-ca/gismondi-canada-wines.git
