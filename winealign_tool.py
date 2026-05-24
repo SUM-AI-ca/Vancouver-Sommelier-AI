@@ -383,9 +383,9 @@ def format_results(results: list[WineAlignResult], query: str) -> str:
 
 async def main():
     try:
-        print("Searching 'storm haven' with reviews...\n")
-        results = await search_winealign("storm haven", max_pages=2, include_reviews=True)
-        print(format_results(results, "storm haven"))
+        print("Searching 'orofino' with reviews...\n")
+        results = await search_winealign("orofino", max_pages=2, include_reviews=True)
+        print(format_results(results, "orofino"))
     finally:
         await _session.close()
 
