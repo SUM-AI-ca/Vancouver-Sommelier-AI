@@ -2,7 +2,7 @@
 
 BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으로 여러 와인 사이트의 데이터를 통합해서 사용자 질문에 답변하는 게 최종 목표.
 
-현재 단계: **데이터 수집 tool 7개 완성, Gismondi 리뷰 DB 빌드/자동 업데이트 완료. LangGraph 에이전트 본격 구축 직전.**
+현재 단계: **데이터 수집 tool 8개 완성, Gismondi 리뷰 DB 빌드/자동 업데이트 완료. LangGraph 에이전트 본격 구축 직전.**
 
 상세 아키텍처 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다.
 
@@ -20,16 +20,17 @@ FastAPI 백엔드 (TODO — SSE 스트리밍)
 LangGraph Agent (TODO — Gemini 3.5 Flash)
     ↓
 ┌─────────────────────────────────────────────────────┐
-│  Tools (데이터 수집 — 모두 완성)                     │
-│                                                     │
-│  winealign_tool.py ──── 전문가 리뷰 & 점수          │
-│  bcliquor_tool.py ───── 가격 & 재고 (공식 주류 판매) │
-│  okanagan_cellars_tool.py ── 밴쿠버 와인샵 재고     │
-│  marquis_tool.py ────── 밴쿠버 큐레이션 와인샵      │
-│  everythingwine_tool.py ── 밴쿠버 와인샵 재고       │
-│  gismondi_tool.py ───── BC/캐나다 와인 평론 (로컬 DB)│
-│  tavily_tool.py ─────── 웹 검색 fallback            │
-└─────────────────────────────────────────────────────┘
+│  Tools (데이터 수집 — 모두 완성)                       │
+│                                                       │
+│  winealign_tool.py ──── 전문가 리뷰 & 점수            │
+│  bcliquor_tool.py ───── 가격 & 재고 (공식 주류 판매)   │
+│  okanagan_cellars_tool.py ── 밴쿠버 와인샵 재고       │
+│  marquis_tool.py ────── 밴쿠버 큐레이션 와인샵        │
+│  everythingwine_tool.py ── 밴쿠버 와인샵 재고         │
+│  gismondi_tool.py ───── BC/캐나다 와인 평론 (로컬 DB)  │
+│  robert_parker_tool.py ── Robert Parker 평점/리뷰     │
+│  tavily_tool.py ─────── 웹 검색 fallback              │
+└───────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -40,6 +41,7 @@ LangGraph Agent (TODO — Gemini 3.5 Flash)
 |-------|------|------|--------|
 | **Gismondi on Wine** | `gismondi_tool.py` + `data/wines.db` | 별도 submodule CSV → SQLite (FTS5) | ❌ |
 | **WineAlign** | `winealign_tool.py` | HTML scraping + login session | ✅ 필요 |
+| **Robert Parker** | `robert_parker_tool.py` | Algolia REST API + auto-login | ✅ 필요 (구독) |
 | **BC Liquor Store** | `bcliquor_tool.py` | JSON API (`/ajax/browse`) | ❌ |
 | **Okanagan Cellars** | `okanagan_cellars_tool.py` | JSON API (`/api/shop/.../products`) | ❌ |
 | **Everything Wine** | `everythingwine_tool.py` | HTML scraping (`catalogsearch`) | ❌ |
@@ -134,7 +136,26 @@ results = await search_gismondi(
 )
 ```
 
-### 7. Tavily 웹 검색 (`tavily_tool.py`)
+### 7. Robert Parker (`robert_parker_tool.py`)
+
+세계에서 가장 영향력 있는 와인 평가 시스템. Robert Parker Wine Advocate의 100점 만점 평점, 전문 테이스팅 노트, 음용 기간(drink window) 등을 Algolia 기반 REST API로 검색한다. 월간 구독($9.99 USD/month)이 필요하다.
+
+- **인증**: CSRF 토큰 + 이메일/비밀번호 자동 로그인. `GET /users/csrf-token`으로 CSRF 쿠키를 받고, `POST /users/login`에 `xsrf-token` 헤더로 전달. JWT `accessToken` (~30일 유효)을 발급받아 이후 API 호출에 사용. 401 에러 시 자동 재로그인.
+- **검색**: Algolia `filters` 문법으로 rating, country, region, color, variety 필터링 가능. `facetFilters` 배열은 이 API에서 무시됨 — 반드시 `filters` 문자열 사용.
+- **데이터**: 와인 이름, producer, vintage, RP 점수 (100점), varieties, region/sub_region/appellation, 가격 범위, drink window, certified (Organic 등), 리뷰어별 테이스팅 노트 + 기사 제목 + producer note
+- **용도**: 국제적으로 인정받는 점수 체계가 필요할 때. WineAlign/Gismondi가 캐나다 중심이라면, RP는 전 세계 와인과의 비교가 가능.
+
+```python
+results = await search_robert_parker(
+    "pinot noir",
+    country="Canada",
+    region="British Columbia",
+    rating_min=90,
+    hits_per_page=5,
+)
+```
+
+### 8. Tavily 웹 검색 (`tavily_tool.py`)
 
 기존 와인 매장/리뷰 툴로 답이 안 나오는 질문 — 예를 들면 "Thai green curry랑 어울리는 BC 와인", "Naramata Bench는 어떤 지역인가", 또는 매장에 없는 와인 이름 disambiguate — 처리용 폴백. Tavily API를 그대로 호출하고, `include_answer=True`로 AI 요약(`answer` 필드)까지 같이 받아서 LLM이 바로 활용할 수 있게 했다.
 
@@ -161,6 +182,7 @@ BC-wine-ai-agents/
 ├── everythingwine_tool.py      # Everything Wine 검색
 ├── debug_everythingwine.py     # Everything Wine HTML 구조 디버깅용
 ├── tavily_tool.py              # Tavily 웹 검색 fallback
+├── robert_parker_tool.py       # Robert Parker 평점/리뷰 (Algolia API)
 ├── gismondi_tool.py            # Gismondi DB 검색 (SQLite + FTS5)
 ├── build_db.py                 # CSV → SQLite 빌드 스크립트
 ├── test_gemini_models.py       # Gemini 모델 비교 테스트 harness
@@ -171,7 +193,7 @@ BC-wine-ai-agents/
 │   └── AGENT_DESIGN.md         # LangGraph 에이전트 설계 문서
 ├── .github/workflows/
 │   └── update_db.yml           # DB 자동 업데이트 (Tue/Thu/Sat)
-├── .env                        # WineAlign, Tavily 키 (gitignored)
+├── .env                        # WineAlign, Tavily, Robert Parker 키 (gitignored)
 ├── .gitignore
 ├── .gitmodules
 └── README.md
@@ -202,6 +224,11 @@ pip install httpx beautifulsoup4 pydantic python-dotenv
 WINEALIGN_EMAIL=your_email@example.com
 WINEALIGN_PASSWORD=your_password
 TAVILY_API_KEY=tvly-...
+
+# Robert Parker (subscription required — auto-login)
+ROBERT_PARKER_EMAIL=your_email@example.com
+ROBERT_PARKER_PASSWORD=your_password
+ROBERT_PARKER_API_KEY=7ZPWPBFIRE2JLR6JBV5SCZPW54ZZSGGY
 ```
 
 ### Gismondi DB 빌드 (최초 1회)
@@ -221,6 +248,7 @@ python okanagan_cellars_tool.py # "checkmate", "tantalus", "cedar creek" 검색
 python marquis_tool.py          # "checkmate", "martins lane", "pinot noir" 검색
 python everythingwine_tool.py   # "martins", "synchromesh" 검색
 python tavily_tool.py           # 페어링/지역 지식 쿼리 3종
+python robert_parker_tool.py    # martin's lane, BC pinot noir, riesling 검색
 python gismondi_tool.py         # pinot/riesling/chardonnay 등 6종 쿼리
 ```
 
