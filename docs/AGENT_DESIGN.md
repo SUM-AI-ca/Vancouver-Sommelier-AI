@@ -1,6 +1,6 @@
 # BC Wine AI Agent — Architectural Design
 
-**Status:** Design Blueprint — implementation in progress (1 / 11 files complete: `gismondi_tool.py`)
+**Status:** Design Blueprint — implementation in progress (2 / 12 files complete: `gismondi_tool.py`, `robert_parker_tool.py`)
 **Last Updated:** 2026-05-25
 **Stack:** LangGraph · Gemini 3.5 Flash (Vertex AI) · Python 3.12 · FastAPI · HTML/CSS/JavaScript · SQLite (FTS5) · LangSmith
 
@@ -33,7 +33,7 @@
 
 ### Purpose
 
-The BC Wine AI Agent is a domain-specific conversational assistant that answers questions about British Columbia (BC) wines by unifying data across **professional critic reviews**, **retail inventory**, **pricing**, and **general wine education**. It is built on LangGraph and acts as a single ReAct agent that orchestrates seven specialized tools.
+The BC Wine AI Agent is a domain-specific conversational assistant that answers questions about British Columbia (BC) wines by unifying data across **professional critic reviews**, **retail inventory**, **pricing**, and **general wine education**. It is built on LangGraph and acts as a single ReAct agent that orchestrates eight specialized tools.
 
 ### Target Users
 
@@ -120,6 +120,10 @@ The interface meets all of them at their level — the same chat surface answers
    │winealign│ │gismondi (DB)│ │tavily (web)  │
    │  AUTH   │ │ SQLite FTS5 │ │   AUTH       │
    └─────────┘ └─────────────┘ └──────────────┘
+   ┌──────────────┐
+   │robert_parker │
+   │  AUTH (JWT)  │
+   └──────────────┘
                                       │
                                       │ (tool results in messages)
                                       ▼
@@ -162,7 +166,7 @@ The interface meets all of them at their level — the same chat surface answers
 
 ## 3. Tool Inventory
 
-Seven tools total — all implemented. Specifications below match the shipping code.
+Eight tools total — all implemented. Specifications below match the shipping code.
 
 ### Summary Table
 
@@ -175,6 +179,7 @@ Seven tools total — all implemented. Specifications below match the shipping c
 | 5 | `marquis_tool.py` | Marquis Wine Cellars (Vancouver, curated) | none | `tuple[list[MarquisResult], int]` | ~1 s | Curated picks, MSRP, hierarchical categories |
 | 6 | `tavily_tool.py` | Tavily web search API | required (paid) | `tuple[list[TavilyResult], str \| None]` | ~2 s | Pairings (niche cuisines), education, regions |
 | 7 | `gismondi_tool.py` | Anthony Gismondi reviews via local SQLite (FTS5) | none | `list[GismondiResult]` | < 100 ms | Canadian wine authority, deep tasting notes |
+| 8 | `robert_parker_tool.py` | Robert Parker Wine Advocate (Algolia API) | required (subscription) | `list[RobertParkerResult]` | ~1 s | World-class ratings, tasting notes, drink windows |
 
 ### Per-Tool Detail
 
@@ -350,6 +355,76 @@ class GismondiResult(BaseModel):
 
 ---
 
+#### 3.8 `search_robert_parker` — Robert Parker Wine Advocate
+
+```python
+async def search_robert_parker(
+    query: str,
+    rating_min: int = 50,
+    hits_per_page: int = 10,
+    page: int = 0,
+    sort: str = "relevancy",       # "relevancy" | "rating" | "vintage" | "price"
+    country: str | None = None,    # e.g. "Canada"
+    region: str | None = None,     # e.g. "British Columbia"
+    color: str | None = None,      # "Red" | "White" | "Rosé"
+    variety: str | None = None,    # e.g. "Pinot Noir"
+) -> list[RobertParkerResult]
+```
+
+```python
+class RobertParkerTastingNote(BaseModel):
+    reviewer: str
+    rating: str
+    content: str
+    published_at: str | None
+    article_title: str | None
+    producer_note: str | None
+
+class RobertParkerResult(BaseModel):
+    wine_id: str
+    display_name: str              # e.g. "2017 Martin's Lane Winery Pinot Noir Naramata Ranch"
+    producer: str
+    name: str
+    vintage: int | None
+    color_class: str               # "Red", "White", etc.
+    country: str
+    region: str
+    sub_region: str | None         # e.g. "Okanagan Valley"
+    appellation: str | None
+    sub_appellation: str | None
+    varieties: list[str]           # e.g. ["Pinot Noir"]
+    rating_display: str            # e.g. "94", "89+", "91+?"
+    rating_computed: float         # sortable numeric rating
+    price_low: float | None
+    price_high: float | None
+    drink_date_low: int | None
+    drink_date_high: int | None
+    dryness: str | None
+    wine_type: str | None          # "Table", "Sparkling", etc.
+    certified: list[str]           # e.g. ["Organic"]
+    last_reviewer: str | None
+    tasting_notes: list[RobertParkerTastingNote]
+    slug: str | None
+```
+
+**Implementation:**
+- Algolia-backed REST API at `api.robertparker.com/v2/v2/algolia`.
+- Auth: automated login — `GET /users/csrf-token` (obtains CSRF token + cookie), then `POST /users/login` with header `xsrf-token` and body `{"username", "password", "device"}`. Returns JWT `accessToken` (~30-day expiry). On 401, auto-relogins.
+- Filtering via Algolia `filters` string syntax (e.g. `"rating_computed:90 TO 100 AND country:Canada AND region:'British Columbia'"`). `facetFilters` array is ignored by this API.
+- `.env` keys: `ROBERT_PARKER_EMAIL`, `ROBERT_PARKER_PASSWORD`, `ROBERT_PARKER_API_KEY` (public key `7ZPW...`).
+
+**Unique value:** **Robert Parker / Wine Advocate ratings** — the single most influential wine scoring system globally. Provides authoritative **100-point ratings**, detailed tasting notes from expert reviewers (e.g., Mark Squires for Canada), **drink windows** (e.g., 2024–2035), **producer notes** (winemaker context per vintage), and **article references**. Coverage spans all major wine regions worldwide.
+
+**When the orchestrator should call it:**
+- User asks "what does Robert Parker rate this wine" or wants RP scores specifically.
+- User wants internationally recognized ratings (vs. Canadian-focused WineAlign/Gismondi).
+- User wants global comparison — e.g., "how does this BC Pinot compare to Burgundy?"
+- Discovery queries for high-rated wines across any region.
+
+**Notes:** Requires an active subscription (~$99 USD/year). Auto-login handles token refresh transparently. **Limit:** the orchestrator should call at most once per turn.
+
+---
+
 ## 4. LangGraph Design
 
 ### 4.1 `AgentState` (TypedDict)
@@ -375,7 +450,7 @@ class MergedWineRecord(TypedDict):
     vintage: int | None
     prices: list[StorePrice]
     best_price: StorePrice | None
-    critic_reviews: list[dict]   # combined winealign + gismondi
+    critic_reviews: list[dict]   # combined winealign + gismondi + robert_parker
     consumer_rating: float | None
     is_bc_vqa: bool
 
