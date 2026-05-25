@@ -27,5 +27,8 @@ env/
 .DS_Store
 Thumbs.db
 
+# LangGraph checkpoints (runtime state, not code)
+data/checkpoints.db
+
 # Claude Code
 .claude/
