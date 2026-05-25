@@ -2,7 +2,7 @@
 
 BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으로 여러 와인 사이트의 데이터를 통합해서 사용자 질문에 답변하는 게 최종 목표.
 
-현재 단계: **데이터 수집 tool 8개 완성, Gismondi 리뷰 DB 빌드/자동 업데이트 완료. LangGraph 에이전트 본격 구축 직전.**
+현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + SUM AI 디자인 채팅 UI 동작 중.**
 
 상세 아키텍처 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다.
 
@@ -13,11 +13,11 @@ BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으�
 ```
 사용자 질문
     ↓
-HTML/CSS/JS 프론트엔드 (TODO — SUMAI 디자인 베이스)
+HTML/CSS/JS 프론트엔드 (static/ — SUMAI 디자인 채팅 모달)
     ↓
-FastAPI 백엔드 (TODO — SSE 스트리밍)
+FastAPI 백엔드 (app.py — SSE 스트리밍)
     ↓
-LangGraph Agent (TODO — Gemini 3.5 Flash)
+LangGraph Agent (agent.py — Gemini 3.5 Flash, 10개 tool)
     ↓
 ┌─────────────────────────────────────────────────────┐
 │  Tools (데이터 수집 — 모두 완성)                       │
@@ -175,25 +175,36 @@ results, answer = await search_tavily("best food pairings for BC Pinot Noir")
 
 ```
 BC-wine-ai-agents/
+├── agent.py                    # LangGraph 그래프 빌더 (ReAct + 10 tools)
+├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, 세션 관리)
+├── state.py                    # AgentState TypedDict + 관련 스키마
+├── models.py                   # Gemini 3.5 Flash LLM 팩토리
+├── prompts.py                  # 오케스트레이터/페어링/합성 시스템 프롬프트
+├── safety.py                   # safe_tool 데코레이터 (에러 래핑)
+├── merge.py                    # 와인 이름 정규화 + 매장 간 중복 제거
 ├── winealign_tool.py           # WineAlign 검색
 ├── bcliquor_tool.py            # BC Liquor Store 검색
 ├── okanagan_cellars_tool.py    # Okanagan Cellars 검색
 ├── marquis_tool.py             # Marquis Wine Cellars 검색
 ├── everythingwine_tool.py      # Everything Wine 검색
-├── debug_everythingwine.py     # Everything Wine HTML 구조 디버깅용
-├── tavily_tool.py              # Tavily 웹 검색 fallback
 ├── robert_parker_tool.py       # Robert Parker 평점/리뷰 (Algolia API)
 ├── gismondi_tool.py            # Gismondi DB 검색 (SQLite + FTS5)
+├── tavily_tool.py              # Tavily 웹 검색 fallback
 ├── build_db.py                 # CSV → SQLite 빌드 스크립트
-├── test_gemini_models.py       # Gemini 모델 비교 테스트 harness
+├── requirements.txt            # Python 패키지 의존성
+├── static/
+│   ├── index.html              # 채팅 UI (SUM AI 디자인)
+│   ├── styles.css              # SUM AI 디자인 토큰
+│   └── app.js                  # SSE 클라이언트 + 마크다운 렌더링
 ├── data/
-│   └── wines.db                # Gismondi 리뷰 SQLite (1391 rows, FTS5 인덱스)
+│   ├── wines.db                # Gismondi 리뷰 SQLite (1391 rows, FTS5)
+│   └── checkpoints.db          # LangGraph 체크포인터 (gitignored)
 ├── gismondi-canada-wines/      # 원본 CSV (git submodule)
 ├── docs/
-│   └── AGENT_DESIGN.md         # LangGraph 에이전트 설계 문서
+│   └── AGENT_DESIGN.md         # 전체 아키텍처 설계 문서
 ├── .github/workflows/
 │   └── update_db.yml           # DB 자동 업데이트 (Tue/Thu/Sat)
-├── .env                        # WineAlign, Tavily, Robert Parker 키 (gitignored)
+├── .env                        # API 키 (gitignored)
 ├── .gitignore
 ├── .gitmodules
 └── README.md
@@ -213,7 +224,13 @@ python -m venv venv
 venv\Scripts\activate  # Windows
 # source venv/bin/activate  # Mac/Linux
 
-pip install httpx beautifulsoup4 pydantic python-dotenv
+pip install -r requirements.txt
+```
+
+### Google Cloud 인증 (Gemini API)
+
+```bash
+gcloud auth application-default login
 ```
 
 ### 환경변수
@@ -229,6 +246,11 @@ TAVILY_API_KEY=tvly-...
 ROBERT_PARKER_EMAIL=your_email@example.com
 ROBERT_PARKER_PASSWORD=your_password
 ROBERT_PARKER_API_KEY=7ZPWPBFIRE2JLR6JBV5SCZPW54ZZSGGY
+
+# LangSmith (optional — tracing)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=ls__...
+LANGCHAIN_PROJECT=bc-wine-ai-agent
 ```
 
 ### Gismondi DB 빌드 (최초 1회)
@@ -261,9 +283,12 @@ python gismondi_tool.py         # pinot/riesling/chardonnay 등 6종 쿼리
 - **Pydantic** — 데이터 모델 & 유효성 검사
 - **python-dotenv** — 환경변수 로딩
 - **SQLite + FTS5** — Gismondi 리뷰 로컬 DB (Python 표준 라이브러리, 별도 설치 없음)
-- **LangGraph + Gemini 3.5 Flash (Vertex AI)** — 에이전트 오케스트레이션 (구축 예정)
-- **FastAPI + HTML/CSS/JS** — 백엔드 API + 프론트엔드 (구축 예정)
-- **LangSmith** — 트레이스/관측 (구축 예정)
+- **LangGraph** — ReAct 에이전트 오케스트레이션 (10개 tool, 병렬 실행)
+- **Gemini 3.5 Flash (Vertex AI)** — 모든 노드에서 사용하는 LLM
+- **FastAPI** — SSE 스트리밍 백엔드
+- **HTML/CSS/JS** — SUM AI 디자인 계승 채팅 UI (vanilla, 빌드 스텝 없음)
+- **rapidfuzz** — 와인 이름 퍼지 매칭 (매장 간 중복 제거)
+- **LangSmith** — 트레이스/관측 (환경변수 설정 시 자동 활성화)
 
 ---
 
@@ -278,18 +303,27 @@ python gismondi_tool.py         # pinot/riesling/chardonnay 등 6종 쿼리
 
 ---
 
+## 서버 실행
+
+```bash
+python -m uvicorn app:app --port 8000
+```
+
+브라우저에서 `http://localhost:8000` 열면 채팅 UI가 뜬다.
+
+---
+
 ## 다음 단계
 
-상세 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다. 남은 구현은:
+상세 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다. 남은 항목:
 
-- [ ] `state.py` — `AgentState` TypedDict
-- [ ] `models.py` — Gemini 3.5 Flash 팩토리 (Vertex AI)
-- [ ] `prompts.py` — orchestrator + synthesis 프롬프트
-- [ ] `safety.py` — `safe_tool` 데코레이터 (graceful degradation)
-- [ ] `merge.py` — 와인 이름 정규화 + 매장 간 중복 제거 (rapidfuzz)
-- [ ] `agent.py` — LangGraph 그래프 빌드, ReAct + checkpointer
-- [ ] `app.py` — FastAPI + SSE 스트리밍 + 세션 관리
-- [ ] `static/` — SUMAI 디자인 베이스 채팅 UI
-- [ ] LangSmith 트레이싱 활성화
+- [x] `state.py` — `AgentState` TypedDict
+- [x] `models.py` — Gemini 3.5 Flash 팩토리 (Vertex AI)
+- [x] `prompts.py` — orchestrator + synthesis 프롬프트
+- [x] `safety.py` — `safe_tool` 데코레이터 (graceful degradation)
+- [x] `merge.py` — 와인 이름 정규화 + 매장 간 중복 제거 (rapidfuzz)
+- [x] `agent.py` — LangGraph 그래프 빌드, ReAct + InMemorySaver
+- [x] `app.py` — FastAPI + SSE 스트리밍 + 세션 관리
+- [x] `static/` — SUMAI 디자인 베이스 채팅 UI
 - [ ] 골든 쿼리 + LLM-as-judge 테스트
 - [ ] Dockerfile + 배포

@@ -1,6 +1,6 @@
 # BC Wine AI Agent — Architectural Design
 
-**Status:** Design Blueprint — implementation in progress (2 / 12 files complete: `gismondi_tool.py`, `robert_parker_tool.py`)
+**Status:** Core implementation complete (11 / 12 files done — tests remaining)
 **Last Updated:** 2026-05-25
 **Stack:** LangGraph · Gemini 3.5 Flash (Vertex AI) · Python 3.12 · FastAPI · HTML/CSS/JavaScript · SQLite (FTS5) · LangSmith
 
@@ -1308,20 +1308,20 @@ Build order (each item assumes the prior items are done):
 | # | File | Status | Purpose | Est. effort |
 |---|---|---|---|---|
 | 1 | `gismondi_tool.py` | ✅ Done | Wrap `data/wines.db` (FTS5) into the standard tool pattern | 1 day |
-| 2 | `state.py` | ☐ | `AgentState` TypedDict and related schemas | 0.25 day |
-| 3 | `models.py` | ☐ | LLM factory (Gemini 3.5 Flash via Vertex AI) | 0.25 day |
-| 4 | `prompts.py` | ☐ | Orchestrator system prompt, sub-LLM prompts, synthesis prompt | 0.5 day |
-| 5 | `safety.py` | ☐ | `safe_tool` decorator + tool wrapping helpers | 0.25 day |
-| 6 | `merge.py` | ☐ | `normalize()`, `MergedWine` model, `merge_tool_results()` | 1 day |
-| 7 | `agent.py` | ☐ | `build_graph()` — wires nodes, tools, checkpointer | 1.5 days |
-| 8 | `app.py` | ☐ | FastAPI: SSE chat endpoint, session management, static mount | 0.75 day |
-| 9 | `static/index.html` + `static/styles.css` + `static/app.js` | ☐ | Frontend chat UI in SUM AI design language | 1.5 days |
+| 2 | `state.py` | ✅ Done | `AgentState` TypedDict and related schemas | 0.25 day |
+| 3 | `models.py` | ✅ Done | LLM factory (Gemini 3.5 Flash via Vertex AI) | 0.25 day |
+| 4 | `prompts.py` | ✅ Done | Orchestrator system prompt, sub-LLM prompts, synthesis prompt | 0.5 day |
+| 5 | `safety.py` | ✅ Done | `safe_tool` decorator + tool wrapping helpers | 0.25 day |
+| 6 | `merge.py` | ✅ Done | `normalize()`, `MergedWine` model, `merge_tool_results()` | 1 day |
+| 7 | `agent.py` | ✅ Done | `build_graph()` — wires nodes, tools, checkpointer | 1.5 days |
+| 8 | `app.py` | ✅ Done | FastAPI: SSE chat endpoint, session management, static mount | 0.75 day |
+| 9 | `static/index.html` + `static/styles.css` + `static/app.js` | ✅ Done | Frontend chat UI in SUM AI design language | 1.5 days |
 | 10 | `tests/golden_queries.py` + `tests/test_agent.py` | ☐ | 12+ golden queries, assertions, LLM-as-judge | 1 day |
 | 11 | `docs/DEPLOYMENT.md` | ☐ | Deploy notes (Docker, env vars, hosting target) | 0.5 day |
 
 ### 15.1 Critical Path
 
-~~`gismondi_tool.py`~~ → `merge.py` → `agent.py` → `app.py` → frontend.
+~~`gismondi_tool.py`~~ → ~~`merge.py`~~ → ~~`agent.py`~~ → ~~`app.py`~~ → ~~frontend~~. All done.
 
 `prompts.py`, `state.py`, `models.py`, and `safety.py` are small and can be slotted in alongside `agent.py` work.
 
@@ -1509,13 +1509,13 @@ Legend: ✅ = exists · ☐ = to build
 
 ```
 BC-wine-ai-agents/
-├── ☐ agent.py                    # build_graph()
-├── ☐ state.py                    # AgentState TypedDict
-├── ☐ models.py                   # LLM factory (Gemini 3.5 Flash)
-├── ☐ prompts.py                  # All prompts
-├── ☐ merge.py                    # Normalize + dedup logic
-├── ☐ safety.py                   # safe_tool decorator
-├── ☐ app.py                      # FastAPI entry point
+├── ✅ agent.py                    # build_graph()
+├── ✅ state.py                    # AgentState TypedDict
+├── ✅ models.py                   # LLM factory (Gemini 3.5 Flash)
+├── ✅ prompts.py                  # All prompts
+├── ✅ merge.py                    # Normalize + dedup logic
+├── ✅ safety.py                   # safe_tool decorator
+├── ✅ app.py                      # FastAPI entry point
 ├── ✅ bcliquor_tool.py
 ├── ✅ winealign_tool.py
 ├── ✅ everythingwine_tool.py
@@ -1527,12 +1527,11 @@ BC-wine-ai-agents/
 ├── data/
 │   ├── ✅ wines.db                # built from CSV (1391 reviews)
 │   └── ☐ checkpoints.db          # LangGraph SqliteSaver (gitignored)
-├── ☐ static/
+├── ✅ static/
 │   ├── index.html                # chat UI
 │   ├── styles.css                # SUM AI design tokens
 │   ├── app.js                    # SSE client + chat logic
 │   └── assets/
-│       └── logo.svg
 ├── ☐ tests/
 │   ├── golden_queries.py
 │   └── test_agent.py
@@ -1545,7 +1544,7 @@ BC-wine-ai-agents/
 ├── ☐ Dockerfile
 ├── ✅ .env                        # gitignored
 ├── ✅ README.md
-└── ☐ requirements.txt
+└── ✅ requirements.txt
 ```
 
 ## Appendix B — Minimum `requirements.txt`
