@@ -1476,15 +1476,15 @@ BC-wine-ai-agents/
 ## Appendix B — Minimum `requirements.txt`
 
 ```
-fastapi>=0.115
-uvicorn[standard]>=0.30
-httpx>=0.27
-pydantic>=2.7
-python-dotenv>=1.0
-beautifulsoup4>=4.12
-langgraph>=0.2
-langchain-core>=0.3
-langchain-google-genai>=2.0
-langsmith>=0.1
-rapidfuzz>=3.9
+fastapi
+uvicorn[standard]
+httpx
+pydantic
+python-dotenv
+beautifulsoup4
+langgraph
+langchain-core
+langchain-google-genai
+langsmith
+rapidfuzz
 ```
