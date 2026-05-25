@@ -2,7 +2,9 @@
 
 BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으로 여러 와인 사이트의 데이터를 통합해서 사용자 질문에 답변하는 게 최종 목표.
 
-현재 단계: **LangGraph 에이전트 구축 전, 데이터 수집용 tool 개발 완료.**
+현재 단계: **데이터 수집 tool 7개 완성, Gismondi 리뷰 DB 빌드/자동 업데이트 완료. LangGraph 에이전트 본격 구축 직전.**
+
+상세 아키텍처 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다.
 
 ---
 
@@ -11,17 +13,22 @@ BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으�
 ```
 사용자 질문
     ↓
-LangGraph Agent (TODO)
+HTML/CSS/JS 프론트엔드 (TODO — SUMAI 디자인 베이스)
+    ↓
+FastAPI 백엔드 (TODO — SSE 스트리밍)
+    ↓
+LangGraph Agent (TODO — Gemini 3.5 Flash)
     ↓
 ┌─────────────────────────────────────────────────────┐
-│  Tools (데이터 수집 — 각 사이트별 search 함수)       │
+│  Tools (데이터 수집 — 모두 완성)                     │
 │                                                     │
 │  winealign_tool.py ──── 전문가 리뷰 & 점수          │
 │  bcliquor_tool.py ───── 가격 & 재고 (공식 주류 판매) │
 │  okanagan_cellars_tool.py ── 밴쿠버 와인샵 재고     │
 │  marquis_tool.py ────── 밴쿠버 큐레이션 와인샵      │
 │  everythingwine_tool.py ── 밴쿠버 와인샵 재고       │
-│  gismondi-canada-wines/ ── 캐나다 와인 평론 데이터   │
+│  gismondi_tool.py ───── BC/캐나다 와인 평론 (로컬 DB)│
+│  tavily_tool.py ─────── 웹 검색 fallback            │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -29,14 +36,15 @@ LangGraph Agent (TODO)
 
 ## 데이터 소스 & 수집 방식
 
-| Store | 파일 | 방식 | 로그인 |
+| Source | 파일 | 방식 | 로그인 |
 |-------|------|------|--------|
-| **Gismondi on Wine** | `gismondi-canada-wines/` (submodule) | 별도 repo에서 스크래핑한 데이터 | ❌ |
+| **Gismondi on Wine** | `gismondi_tool.py` + `data/wines.db` | 별도 submodule CSV → SQLite (FTS5) | ❌ |
 | **WineAlign** | `winealign_tool.py` | HTML scraping + login session | ✅ 필요 |
 | **BC Liquor Store** | `bcliquor_tool.py` | JSON API (`/ajax/browse`) | ❌ |
 | **Okanagan Cellars** | `okanagan_cellars_tool.py` | JSON API (`/api/shop/.../products`) | ❌ |
 | **Everything Wine** | `everythingwine_tool.py` | HTML scraping (`catalogsearch`) | ❌ |
 | **Marquis Wine Cellars** | `marquis_tool.py` | JSON API (BigCommerce Discovery) | ❌ |
+| **Tavily 웹 검색** | `tavily_tool.py` | REST API (paid) | ✅ 필요 |
 
 ---
 
@@ -104,13 +112,40 @@ results, total = await search_marquis("martins lane", limit=30)
 results = await search_everything_wine("synchromesh")
 ```
 
-### 6. Gismondi on Wine (`gismondi-canada-wines/`)
+### 6. Gismondi on Wine (`gismondi_tool.py` + `data/wines.db`)
 
-캐나다 와인 평론가 Anthony Gismondi의 리뷰 데이터. 별도 GitHub repo에서 스크래핑하고, 이 프로젝트에서는 **git submodule**로 참조만 한다. 원본 repo에서 GitHub Actions가 주간 스케줄로 자동 업데이트 중.
+캐나다 와인 평론가 Anthony Gismondi의 리뷰 데이터. 원본 CSV는 별도 submodule (`gismondi-canada-wines/`)에서 관리되고, 거기 GitHub Actions이 주 3회 자동 스크래핑한다. 그런데 매번 CSV를 파싱하는 건 비효율적이라 SQLite로 빌드해서 쓰기로 했다. 어차피 데이터가 1400건 수준이라 SQLite로 충분하고, FTS5 가상 테이블 붙이면 풀텍스트 검색도 깔끔하게 된다.
 
-```bash
-# 최신 데이터 가져오기
-git submodule update --remote
+처음엔 FTS5 쿼리에 아포스트로피("quails' gate" 같은) 넣으면 syntax error가 났는데, `re.sub(r'[^\w\s]', ' ', query)`로 special char 다 날리고 토큰만 남기는 식으로 해결했다. FTS5는 디폴트가 implicit AND라서 토큰 두 개 들어가면 둘 다 매칭되는 문서만 반환한다.
+
+- **데이터**: 와인 이름, /100 점수, /20 점수, region, tasting notes, taster, 가격, producer, grape, distributor, url 등 — 현재 1391건
+- **FTS5 인덱스 필드**: title, region, tasting_notes, grape, producer
+- **필터**: `score_min`, `price_max`, `bc_only` (기본 True)
+- **빌드**: `python build_db.py` (CSV → `data/wines.db`)
+- **자동 업데이트**: `.github/workflows/update_db.yml`이 Tue/Thu/Sat 02:00 UTC에 submodule pull → DB 재빌드 → 변경분 커밋. 원본 스크래퍼가 Mon/Wed/Fri에 돌아서 2시간 뒤 따라가게 맞췄다.
+- **async 처리**: SQLite는 blocking이라 `asyncio.to_thread()`로 감싸서 이벤트 루프 안 막게 함
+
+```python
+results = await search_gismondi(
+    "pinot noir",
+    score_min=90,
+    price_max=50,
+    bc_only=True,
+)
+```
+
+### 7. Tavily 웹 검색 (`tavily_tool.py`)
+
+기존 와인 매장/리뷰 툴로 답이 안 나오는 질문 — 예를 들면 "Thai green curry랑 어울리는 BC 와인", "Naramata Bench는 어떤 지역인가", 또는 매장에 없는 와인 이름 disambiguate — 처리용 폴백. Tavily API를 그대로 호출하고, `include_answer=True`로 AI 요약(`answer` 필드)까지 같이 받아서 LLM이 바로 활용할 수 있게 했다.
+
+기존 툴들이 다 `httpx.AsyncClient` 쓰고 있어서 SDK(`tavily-python`) 안 깔고 REST API 직접 호출. 의존성 하나 늘리지 않고 패턴도 일관됨.
+
+- **인증**: `.env`의 `TAVILY_API_KEY` 필요
+- **데이터**: title, url, content snippet, relevance score, published_date, AI-generated summary
+- **주의**: 호출당 과금. agent 시스템 프롬프트에서 호출 빈도 제한할 예정 (turn당 1회 권장)
+
+```python
+results, answer = await search_tavily("best food pairings for BC Pinot Noir")
 ```
 
 ---
@@ -119,14 +154,24 @@ git submodule update --remote
 
 ```
 BC-wine-ai-agents/
-├── winealign_tool.py           # WineAlign 검색 (HTML scraping + 로그인)
-├── bcliquor_tool.py            # BC Liquor Store 검색 (JSON API)
-├── okanagan_cellars_tool.py    # Okanagan Cellars 검색 (JSON API)
-├── marquis_tool.py             # Marquis Wine Cellars 검색 (BigCommerce API)
-├── everythingwine_tool.py      # Everything Wine 검색 (HTML scraping)
+├── winealign_tool.py           # WineAlign 검색
+├── bcliquor_tool.py            # BC Liquor Store 검색
+├── okanagan_cellars_tool.py    # Okanagan Cellars 검색
+├── marquis_tool.py             # Marquis Wine Cellars 검색
+├── everythingwine_tool.py      # Everything Wine 검색
 ├── debug_everythingwine.py     # Everything Wine HTML 구조 디버깅용
-├── gismondi-canada-wines/      # Gismondi 리뷰 데이터 (git submodule)
-├── .env                        # 환경변수 (WineAlign 계정 — git 추적 안됨)
+├── tavily_tool.py              # Tavily 웹 검색 fallback
+├── gismondi_tool.py            # Gismondi DB 검색 (SQLite + FTS5)
+├── build_db.py                 # CSV → SQLite 빌드 스크립트
+├── test_gemini_models.py       # Gemini 모델 비교 테스트 harness
+├── data/
+│   └── wines.db                # Gismondi 리뷰 SQLite (1391 rows, FTS5 인덱스)
+├── gismondi-canada-wines/      # 원본 CSV (git submodule)
+├── docs/
+│   └── AGENT_DESIGN.md         # LangGraph 에이전트 설계 문서
+├── .github/workflows/
+│   └── update_db.yml           # DB 자동 업데이트 (Tue/Thu/Sat)
+├── .env                        # WineAlign, Tavily 키 (gitignored)
 ├── .gitignore
 ├── .gitmodules
 └── README.md
@@ -151,11 +196,20 @@ pip install httpx beautifulsoup4 pydantic python-dotenv
 
 ### 환경변수
 
-`.env` 파일 생성 (WineAlign 계정 필요):
+`.env` 파일 생성:
 
 ```
 WINEALIGN_EMAIL=your_email@example.com
 WINEALIGN_PASSWORD=your_password
+TAVILY_API_KEY=tvly-...
+```
+
+### Gismondi DB 빌드 (최초 1회)
+
+GitHub Actions이 자동으로 업데이트해주지만, 처음 clone하면 직접 빌드해야 한다:
+
+```bash
+python build_db.py
 ```
 
 ### 각 tool 독립 테스트
@@ -166,6 +220,8 @@ python bcliquor_tool.py         # "tantalus", "checkmate" 검색
 python okanagan_cellars_tool.py # "checkmate", "tantalus", "cedar creek" 검색
 python marquis_tool.py          # "checkmate", "martins lane", "pinot noir" 검색
 python everythingwine_tool.py   # "martins", "synchromesh" 검색
+python tavily_tool.py           # 페어링/지역 지식 쿼리 3종
+python gismondi_tool.py         # pinot/riesling/chardonnay 등 6종 쿼리
 ```
 
 ---
@@ -176,7 +232,10 @@ python everythingwine_tool.py   # "martins", "synchromesh" 검색
 - **BeautifulSoup4** — HTML 파싱 (WineAlign, Everything Wine)
 - **Pydantic** — 데이터 모델 & 유효성 검사
 - **python-dotenv** — 환경변수 로딩
-- **LangGraph** — 에이전트 오케스트레이션 (구축 예정)
+- **SQLite + FTS5** — Gismondi 리뷰 로컬 DB (Python 표준 라이브러리, 별도 설치 없음)
+- **LangGraph + Gemini 3.5 Flash (Vertex AI)** — 에이전트 오케스트레이션 (구축 예정)
+- **FastAPI + HTML/CSS/JS** — 백엔드 API + 프론트엔드 (구축 예정)
+- **LangSmith** — 트레이스/관측 (구축 예정)
 
 ---
 
@@ -193,6 +252,16 @@ python everythingwine_tool.py   # "martins", "synchromesh" 검색
 
 ## 다음 단계
 
-- [ ] LangGraph 에이전트 구축 — 사용자 질문을 받아서 적절한 tool 호출
-- [ ] tool 간 데이터 통합 — 같은 와인을 여러 소스에서 찾아 비교
-- [ ] Gismondi 데이터 연동 — submodule의 리뷰 데이터를 agent가 참조
+상세 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다. 남은 구현은:
+
+- [ ] `state.py` — `AgentState` TypedDict
+- [ ] `models.py` — Gemini 3.5 Flash 팩토리 (Vertex AI)
+- [ ] `prompts.py` — orchestrator + synthesis 프롬프트
+- [ ] `safety.py` — `safe_tool` 데코레이터 (graceful degradation)
+- [ ] `merge.py` — 와인 이름 정규화 + 매장 간 중복 제거 (rapidfuzz)
+- [ ] `agent.py` — LangGraph 그래프 빌드, ReAct + checkpointer
+- [ ] `app.py` — FastAPI + SSE 스트리밍 + 세션 관리
+- [ ] `static/` — SUMAI 디자인 베이스 채팅 UI
+- [ ] LangSmith 트레이싱 활성화
+- [ ] 골든 쿼리 + LLM-as-judge 테스트
+- [ ] Dockerfile + 배포
