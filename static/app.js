@@ -1,4 +1,4 @@
-/* BC Wine AI — SSE chat client */
+/* BC Wine — SSE chat client */
 
 const TOOL_LABELS = {
   search_bcliquor_tool: "BC Liquor inventory",
@@ -17,11 +17,53 @@ const $ = (sel) => document.querySelector(sel);
 const messagesEl = $("#chat-messages");
 const inputEl = $("#chat-input");
 const sendBtn = $("#chat-send");
-const typingEl = $("#chat-typing");
+const statusEl = $("#chat-status");
 const overlay = $("#chat-overlay");
+const openBtn = $("#open-chat");
+const closeBtn = $("#chat-close");
 
-let threadId = localStorage.getItem("bc_wine_thread_id");
+// thread_id is intentionally NOT persisted in localStorage. Each time the
+// chatbox is opened we create a fresh session so the agent's wine_context
+// cache (which accumulates across turns inside a thread) starts empty —
+// this prevents wines from earlier unrelated queries from leaking into a
+// new conversation. Follow-up turns within the same open chat still share
+// memory because the thread_id stays stable until the chat is closed.
+let threadId = null;
 let sending = false;
+let activeTools = 0;
+
+const INITIAL_GREETING = "Ask about BC wines: prices, availability, critic reviews, food pairings, or anything else.";
+
+/* ── Overlay open/close ──────────────────────────── */
+
+async function openChat() {
+  resetConversation();
+  overlay.classList.add("active");
+  document.body.style.overflow = "hidden";
+  await ensureSession();
+  // Defer focus so the overlay is painted before the input grabs focus,
+  // otherwise mobile keyboards can pop up against an offscreen element.
+  setTimeout(() => inputEl.focus(), 0);
+}
+
+function closeChat() {
+  overlay.classList.remove("active");
+  document.body.style.overflow = "";
+}
+
+function resetConversation() {
+  threadId = null;
+  activeTools = 0;
+  messagesEl.innerHTML = `<div class="chat-message ai">${escapeHtml(INITIAL_GREETING)}</div>`;
+  setStatus("Ready", false);
+}
+
+openBtn.addEventListener("click", openChat);
+closeBtn.addEventListener("click", closeChat);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && overlay.classList.contains("active")) closeChat();
+});
 
 /* ── Session ─────────────────────────────────────── */
 
@@ -31,66 +73,116 @@ async function ensureSession() {
     const res = await fetch("/api/session", { method: "POST" });
     const data = await res.json();
     threadId = data.thread_id;
-    localStorage.setItem("bc_wine_thread_id", threadId);
   } catch {
     threadId = crypto.randomUUID();
-    localStorage.setItem("bc_wine_thread_id", threadId);
   }
 }
 
-/* ── Chat overlay toggle ─────────────────────────── */
+/* ── Status ──────────────────────────────────────── */
 
-function openChat() {
-  overlay.classList.add("active");
-  inputEl.focus();
+function setStatus(text, working) {
+  statusEl.textContent = text;
+  statusEl.classList.toggle("is-working", !!working);
 }
-
-function closeChat() {
-  overlay.classList.remove("active");
-}
-
-$("#open-chat").addEventListener("click", openChat);
-$("#nav-chat").addEventListener("click", (e) => {
-  e.preventDefault();
-  openChat();
-});
-$("#chat-close").addEventListener("click", closeChat);
-
-overlay.addEventListener("click", (e) => {
-  if (e.target === overlay) closeChat();
-});
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeChat();
-});
 
 /* ── Message rendering ───────────────────────────── */
 
 function addMessage(role, html) {
   const div = document.createElement("div");
-  div.className = `demo-chat-message ${role}`;
+  div.className = `chat-message ${role}`;
   div.innerHTML = html;
   messagesEl.appendChild(div);
   scrollToBottom();
   return div;
 }
 
-function addToolBadge(toolName) {
+function addToolBadge(toolName, runId) {
   const label = TOOL_LABELS[toolName] || toolName;
-  const badge = document.createElement("div");
-  badge.className = "tool-badge";
-  badge.dataset.tool = toolName;
-  badge.innerHTML = `<span class="spinner"></span>${label}`;
-  messagesEl.appendChild(badge);
+  const wrapper = document.createElement("div");
+  wrapper.className = "tool-badge";
+  wrapper.dataset.tool = toolName;
+  if (runId) wrapper.dataset.runId = runId;
+  wrapper.innerHTML = `
+    <button type="button" class="tool-badge-header" aria-expanded="false">
+      <span class="tool-badge-indicator" aria-hidden="true"></span>
+      <span class="tool-badge-label">${escapeHtml(label)}</span>
+      <span class="tool-badge-count"></span>
+      <span class="tool-badge-chevron" aria-hidden="true"></span>
+    </button>
+    <div class="tool-badge-panel"></div>
+  `;
+  const headerBtn = wrapper.querySelector(".tool-badge-header");
+  headerBtn.addEventListener("click", () => {
+    if (!wrapper.classList.contains("done")) return;
+    const expanded = wrapper.classList.toggle("open");
+    headerBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
+  });
+  messagesEl.appendChild(wrapper);
   scrollToBottom();
-  return badge;
+  return wrapper;
 }
 
-function completeToolBadge(toolName) {
-  const badges = messagesEl.querySelectorAll(
-    `.tool-badge[data-tool="${toolName}"]:not(.done)`
-  );
-  badges.forEach((b) => b.classList.add("done"));
+function renderToolRow(row) {
+  const title = escapeHtml(row.title || "");
+  // Long-form bodies (sommelier reasoning, Tavily summary) come through with
+  // markdown:true so they render with paragraphs/lists instead of getting
+  // clipped into a single subtitle line.
+  if (row.markdown && row.body) {
+    return `<div class="tool-row">
+              <div class="tool-row-title">${title}</div>
+              <div class="tool-row-body">${renderMarkdown(row.body)}</div>
+            </div>`;
+  }
+  const subtitle = row.subtitle
+    ? `<span class="tool-row-subtitle">${escapeHtml(row.subtitle)}</span>`
+    : "";
+  if (row.url) {
+    return `<a class="tool-row" href="${escapeAttr(row.url)}" target="_blank" rel="noopener noreferrer">
+              <span class="tool-row-title">${title}</span>${subtitle}
+            </a>`;
+  }
+  return `<div class="tool-row">
+            <span class="tool-row-title">${title}</span>${subtitle}
+          </div>`;
+}
+
+function completeToolBadge(toolName, runId, summary, count) {
+  let target = null;
+  if (runId) {
+    target = messagesEl.querySelector(
+      `.tool-badge[data-run-id="${CSS.escape(runId)}"]`
+    );
+  }
+  if (!target) {
+    target = messagesEl.querySelector(
+      `.tool-badge[data-tool="${CSS.escape(toolName)}"]:not(.done)`
+    );
+  }
+  if (!target) return;
+
+  target.classList.add("done");
+  const countEl = target.querySelector(".tool-badge-count");
+  if (countEl) {
+    countEl.textContent = count ? `${count} result${count > 1 ? "s" : ""}` : "no results";
+  }
+  const panel = target.querySelector(".tool-badge-panel");
+  if (panel && Array.isArray(summary) && summary.length > 0) {
+    panel.innerHTML = summary.map(renderToolRow).join("");
+  } else if (panel) {
+    panel.innerHTML = `<div class="tool-row-empty">No results returned.</div>`;
+  }
+}
+
+function markRemainingBadgesDone() {
+  messagesEl.querySelectorAll(".tool-badge:not(.done)").forEach((b) => {
+    b.classList.add("done");
+    const countEl = b.querySelector(".tool-badge-count");
+    if (countEl) countEl.textContent = "completed";
+    const panel = b.querySelector(".tool-badge-panel");
+    if (panel && !panel.innerHTML) {
+      panel.innerHTML = `<div class="tool-row-empty">No details available.</div>`;
+    }
+  });
 }
 
 function scrollToBottom() {
@@ -112,9 +204,11 @@ async function sendMessage() {
 
   await ensureSession();
 
-  typingEl.classList.add("visible");
+  activeTools = 0;
+  setStatus("Processing", true);
   let aiDiv = null;
   let tokenBuf = "";
+  let currentRunId = null;
 
   try {
     const res = await fetch("/api/chat", {
@@ -145,18 +239,32 @@ async function sendMessage() {
         }
 
         switch (event.type) {
-          case "tool_start":
-            addToolBadge(event.tool);
+          case "tool_start": {
+            addToolBadge(event.tool, event.run_id);
+            activeTools += 1;
+            const label = TOOL_LABELS[event.tool] || event.tool;
+            setStatus(`Running ${label}`, true);
             break;
+          }
 
           case "tool_end":
-            completeToolBadge(event.tool);
+            completeToolBadge(event.tool, event.run_id, event.summary, event.count);
+            activeTools = Math.max(0, activeTools - 1);
+            if (activeTools === 0) setStatus("Processing", true);
             break;
 
           case "token":
-            typingEl.classList.remove("visible");
+            if (event.run_id && event.run_id !== currentRunId) {
+              currentRunId = event.run_id;
+              tokenBuf = "";
+              if (aiDiv) {
+                aiDiv.remove();
+                aiDiv = null;
+              }
+            }
             if (!aiDiv) {
               aiDiv = addMessage("ai", "");
+              setStatus("Writing response", true);
             }
             tokenBuf += event.text;
             aiDiv.innerHTML = renderMarkdown(tokenBuf);
@@ -164,22 +272,23 @@ async function sendMessage() {
             break;
 
           case "done":
-            typingEl.classList.remove("visible");
             if (aiDiv) {
               aiDiv.innerHTML = renderMarkdown(tokenBuf);
             }
+            markRemainingBadgesDone();
+            setStatus("Task finished", false);
             break;
 
           case "error":
-            typingEl.classList.remove("visible");
             addMessage("ai", `<em>Error: ${escapeHtml(event.message)}</em>`);
+            setStatus("Error", false);
             break;
         }
       }
     }
   } catch (err) {
-    typingEl.classList.remove("visible");
     addMessage("ai", `<em>Connection error. Please try again.</em>`);
+    setStatus("Error", false);
   }
 
   sending = false;
@@ -191,14 +300,25 @@ async function sendMessage() {
 
 function renderMarkdown(text) {
   if (typeof marked !== "undefined" && marked.parse) {
-    return marked.parse(text);
+    const html = marked.parse(text);
+    return html.replace(
+      /<a (?![^>]*\btarget=)/gi,
+      '<a target="_blank" rel="noopener noreferrer" ',
+    );
   }
   return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
 function escapeHtml(str) {
+  if (str == null) return "";
   const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
-  return str.replace(/[&<>"']/g, (c) => map[c]);
+  return String(str).replace(/[&<>"']/g, (c) => map[c]);
+}
+
+function escapeAttr(str) {
+  const s = String(str || "");
+  if (/^\s*javascript:/i.test(s)) return "#";
+  return s.replace(/["'<>]/g, (c) => ({ '"': "&quot;", "'": "&#039;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
 /* ── Event listeners ─────────────────────────────── */
@@ -214,7 +334,9 @@ inputEl.addEventListener("keydown", (e) => {
 
 inputEl.addEventListener("input", () => {
   inputEl.style.height = "auto";
-  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + "px";
 });
 
-ensureSession();
+// Clean up the stale thread_id from earlier builds that persisted it across
+// reloads. No-op for new visitors.
+try { localStorage.removeItem("bc_wine_thread_id"); } catch {}
