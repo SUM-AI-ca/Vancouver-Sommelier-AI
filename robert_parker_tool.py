@@ -286,7 +286,7 @@ async def search_robert_parker(
         list[RobertParkerResult] with tasting notes, ratings, drink windows.
     """
     payload = {
-        "query": query,
+        "query": query.replace("'", "").replace("’", "").replace("‘", ""),
         "filters": _build_filters(rating_min, country, region, color, variety),
         "page": page,
         "facets": ["*"],

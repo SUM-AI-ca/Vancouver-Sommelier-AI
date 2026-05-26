@@ -47,6 +47,12 @@ class EverythingWineResult(BaseModel):
 
 # ── Core Search ─────────────────────────────────────────────────────
 
+def _clean_query(q: str) -> str:
+    """Strip apostrophes / smart quotes — some store backends silently zero-out
+    results when these are present (verified on Okanagan Cellars)."""
+    return q.replace("'", "").replace("’", "").replace("‘", "")
+
+
 async def search_everything_wine(query: str) -> list[EverythingWineResult]:
     """
     Search Everything Wine product catalogue.
@@ -55,7 +61,7 @@ async def search_everything_wine(query: str) -> list[EverythingWineResult]:
         query: Wine name, winery, or varietal (e.g., "tantalus", "checkmate chardonnay")
     """
     async with httpx.AsyncClient(follow_redirects=True, timeout=15.0, headers=HEADERS) as client:
-        resp = await client.get(SEARCH_URL, params={"q": query})
+        resp = await client.get(SEARCH_URL, params={"q": _clean_query(query)})
         resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")

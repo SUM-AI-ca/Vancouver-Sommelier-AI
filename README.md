@@ -2,7 +2,7 @@
 
 BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으로 여러 와인 사이트의 데이터를 통합해서 사용자 질문에 답변하는 게 최종 목표.
 
-현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + SUM AI 디자인 채팅 UI 동작 중.**
+현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + SUM AI 디자인 채팅 UI 동작 중. Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중 (8회 iteration, 현재 Tool orchestration 100% / Hallucination 8.9% / Judge overall 3.4–3.9).**
 
 상세 아키텍처 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다.
 
@@ -200,8 +200,14 @@ BC-wine-ai-agents/
 │   ├── wines.db                # Gismondi 리뷰 SQLite (1391 rows, FTS5)
 │   └── checkpoints.db          # LangGraph 체크포인터 (gitignored)
 ├── gismondi-canada-wines/      # 원본 CSV (git submodule)
+├── tests/                      # Golden-query quality evaluation
+│   ├── golden_queries.py       # 38 queries across 13 categories (INV/CRI/PAIR/MT/...)
+│   ├── metrics.py              # Deterministic metrics (orch, hallucination, coverage, structure)
+│   ├── judge.py                # LLM-as-judge (Gemini Flash temp=0)
+│   ├── quality_eval.py         # Runner — produces results.json + summary.md + transcripts
+│   └── results/<timestamp>/    # Per-run outputs (gitignored)
 ├── docs/
-│   └── AGENT_DESIGN.md         # 전체 아키텍처 설계 문서
+│   └── AGENT_DESIGN.md         # 전체 아키텍처 설계 문서 + iteration history
 ├── .github/workflows/
 │   └── update_db.yml           # DB 자동 업데이트 (Tue/Thu/Sat)
 ├── .env                        # API 키 (gitignored)
@@ -315,15 +321,28 @@ python -m uvicorn app:app --port 8000
 
 ## 다음 단계
 
-상세 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다. 남은 항목:
+상세 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다 — 8회 iteration 의 결과 분석과 다음 architectural 개선 후보까지 같이 들어 있다. 남은 항목:
 
 - [x] `state.py` — `AgentState` TypedDict
 - [x] `models.py` — Gemini 3.5 Flash 팩토리 (Vertex AI)
-- [x] `prompts.py` — orchestrator + synthesis 프롬프트
+- [x] `prompts.py` — orchestrator + synthesis 프롬프트 (15개 behavioral rules, table-skeleton output contract)
 - [x] `safety.py` — `safe_tool` 데코레이터 (graceful degradation)
-- [x] `merge.py` — 와인 이름 정규화 + 매장 간 중복 제거 (rapidfuzz)
-- [x] `agent.py` — LangGraph 그래프 빌드, ReAct + InMemorySaver
+- [x] `merge.py` — 와인 이름 정규화 + 매장 간 중복 제거 (rapidfuzz). Gismondi 의 `price_channel` → synthetic StorePrice 변환 포함.
+- [x] `agent.py` — LangGraph 그래프 빌드, ReAct + InMemorySaver. `MAX_TOOL_ROUNDS=3` safety net + `format_response_node` 합성 단계 구현.
 - [x] `app.py` — FastAPI + SSE 스트리밍 + 세션 관리
 - [x] `static/` — SUMAI 디자인 베이스 채팅 UI
-- [ ] 골든 쿼리 + LLM-as-judge 테스트
+- [x] `tests/` — 38개 golden query + 결정론적 metric + LLM-as-judge (`python -m tests.quality_eval`)
+- [ ] Architectural 다음 단계: query-type routing, deterministic Where-to-buy 렌더링, merge fuzzy matching 강화 (`docs/AGENT_DESIGN.md` §18.2 참조)
 - [ ] Dockerfile + 배포
+
+### 품질 평가 파이프라인 실행
+
+```bash
+python -m tests.quality_eval                    # 전체 38 query (~40-50 min)
+python -m tests.quality_eval --only INV,CRI     # 카테고리 필터
+python -m tests.quality_eval --id INV-001       # 단일 query
+python -m tests.quality_eval --dry-run          # 빠른 sanity check (2 query)
+python -m tests.quality_eval --skip-judge       # 결정론적 metric 만
+```
+
+결과는 `tests/results/<YYYYMMDD-HHMMSS>/` 에 `results.json`, `summary.md`, `transcripts/<id>.md` 형식으로 저장됨.

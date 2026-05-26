@@ -57,6 +57,13 @@ class BCLiquorResult(BaseModel):
 
 # ── Core Search ─────────────────────────────────────────────────────
 
+def _clean_query(q: str) -> str:
+    """Strip apostrophes / smart quotes for consistency with other store
+    backends (Okanagan Cellars in particular returns 0 hits when an ASCII
+    apostrophe is present)."""
+    return q.replace("'", "").replace("’", "").replace("‘", "")
+
+
 async def search_bcliquor(
     query: str,
     max_pages: int = 2,
@@ -75,7 +82,7 @@ async def search_bcliquor(
     async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
         for page in range(1, max_pages + 1):
             params = {
-                "search": query,
+                "search": _clean_query(query),
                 "sort": "_score:desc",
                 "size": PAGE_SIZE,
                 "page": page,
