@@ -137,7 +137,10 @@ async def reasoning_pair_wine_tool(dish: str) -> str:
         SystemMessage(content=PAIRING_SYSTEM_PROMPT),
         HumanMessage(content=f"What BC wine pairs best with: {dish}"),
     ])
-    content = resp.content if isinstance(resp.content, str) else str(resp.content)
+    # Gemini returns content as a list of typed parts; str() on that emits the
+    # Python repr ([{'type': 'text', 'text': '...'}]) which leaks into the UI.
+    # _extract_text flattens the list into clean text.
+    content = _extract_text(resp.content)
     return json.dumps({"status": "ok", "tool": "reasoning_pair_wine", "recommendation": content})
 
 
@@ -295,8 +298,16 @@ def merge_results_node(state: AgentState) -> dict:
 
 
 def _compact_wine_record(rec: dict) -> dict:
-    """Strip a MergedWineRecord down to fields the synthesizer actually uses."""
-    prices = rec.get("prices") or []
+    """Strip a MergedWineRecord down to fields the synthesizer actually uses.
+
+    Splits prices into two lists:
+    - retail_prices: real store inventory rows that go in the Where-to-buy table
+    - reference_prices: critic-quoted prices (Gismondi review snapshots) — these
+      go in a separate "Reference price" note, NEVER in the Where-to-buy table
+    """
+    all_prices = rec.get("prices") or []
+    retail = [p for p in all_prices if not p.get("is_reference")][:6]
+    refs = [p for p in all_prices if p.get("is_reference")][:3]
     critics = rec.get("critic_reviews") or []
     return {
         "display_name": rec.get("display_name"),
@@ -307,7 +318,8 @@ def _compact_wine_record(rec: dict) -> dict:
         "consumer_rating": rec.get("consumer_rating"),
         "avg_critic_score": rec.get("avg_critic_score"),
         "best_price": rec.get("best_price"),
-        "prices": prices[:6],
+        "retail_prices": retail,
+        "reference_prices": refs,
         "critic_reviews": critics[:4],
         "tasting_notes_consolidated": rec.get("tasting_notes_consolidated"),
     }

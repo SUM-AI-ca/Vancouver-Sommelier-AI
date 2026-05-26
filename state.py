@@ -6,13 +6,14 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
 
-class StorePrice(TypedDict):
-    store: str  # "bcliquor" | "marquis" | "okanagan" | "everythingwine"
+class StorePrice(TypedDict, total=False):
+    store: str  # "bcliquor" | "marquis" | "okanagan" | "everythingwine" | "gismondi_ref"
     price: float
     on_sale: bool
     in_stock: bool
     url: str | None
     stock_qty: int | None
+    is_reference: bool  # True when this price came from a critic review, not a store inventory check (e.g. Gismondi). Synthesis must NOT render these in the Where-to-buy table — they belong in a "Reference price" note.
 
 
 class CriticReviewMerged(TypedDict):

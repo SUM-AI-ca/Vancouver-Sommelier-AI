@@ -2,7 +2,17 @@
 
 BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으로 여러 와인 사이트의 데이터를 통합해서 사용자 질문에 답변하는 게 최종 목표.
 
-현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + SUM AI 디자인 채팅 UI 동작 중. Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중 (8회 iteration, 현재 Tool orchestration 100% / Hallucination 8.9% / Judge overall 3.4–3.9).**
+현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + 와인 컬러 풀스크린 채팅 UI 동작 중. Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중 (8회 iteration, 현재 Tool orchestration 100% / Hallucination 8.9% / Judge overall 3.4–3.9).**
+
+### 최근 UI/UX 개편
+
+- **랜딩 + 풀스크린 채팅 오버레이** — 간단한 capability 설명이 있는 랜딩 페이지에서 "Start chatting" 버튼을 누르면 화면을 가득 채우는 채팅 오버레이가 뜬다.
+- **연한 와인 컬러 팔레트** — 기존 SUM AI 파란색에서 데사추레이트된 burgundy(`#7A3D4F`) 톤으로 교체. 이모지/장식용 유니코드 심볼은 모두 제거.
+- **상태 인디케이터** — 채팅 헤더가 `Ready` → `Processing` → `Running <tool>` → `Writing response` → `Task finished` 순으로 실시간 상태를 보여준다. 작동 중 점 세 개 애니메이션은 제거.
+- **툴 배지** — 각 tool 호출이 expandable 배지로 렌더링됨. 완료되면 결과 개수 표시 + 클릭으로 결과 미리보기 드롭다운. Sommelier reasoning / Tavily 처럼 긴 본문은 마크다운으로 렌더링.
+- **세션은 채팅 오픈 단위** — `thread_id`를 `localStorage`에 저장하지 않음. 채팅을 열 때마다 새 thread_id 발급 → 같은 오버레이 안에서는 follow-up이 메모리를 공유하지만, 닫고 다시 열면 깨끗한 상태로 시작한다. (이전: 영구 persisted thread → `wine_context`가 무한 누적되며 무관한 와인이 새 대화에 누출됨)
+- **중복 출력 제거** — 오케스트레이터 draft tokens은 서버에서 버퍼링되고 `format_response`의 synthesis만 클라이언트로 스트리밍됨. Off-topic 쿼리(synthesis 스킵)에서는 마지막 orchestrator 응답이 fallback으로 release.
+- **링크는 새 탭** — `marked.parse` 결과 모든 `<a>` 태그에 `target="_blank" rel="noopener noreferrer"` 자동 주입.
 
 상세 아키텍처 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다.
 
@@ -193,9 +203,9 @@ BC-wine-ai-agents/
 ├── build_db.py                 # CSV → SQLite 빌드 스크립트
 ├── requirements.txt            # Python 패키지 의존성
 ├── static/
-│   ├── index.html              # 채팅 UI (SUM AI 디자인)
-│   ├── styles.css              # SUM AI 디자인 토큰
-│   └── app.js                  # SSE 클라이언트 + 마크다운 렌더링
+│   ├── index.html              # 랜딩 페이지 + 풀스크린 채팅 오버레이
+│   ├── styles.css              # 와인 컬러 팔레트, 채팅 + 툴 배지 스타일
+│   └── app.js                  # SSE 클라이언트, run_id 기반 툴 배지 매칭, 마크다운 렌더링
 ├── data/
 │   ├── wines.db                # Gismondi 리뷰 SQLite (1391 rows, FTS5)
 │   └── checkpoints.db          # LangGraph 체크포인터 (gitignored)

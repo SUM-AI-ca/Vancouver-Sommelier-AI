@@ -67,11 +67,15 @@ def _parse_price(raw: str | float | None) -> float | None:
 
 
 def _select_best_price(prices: list[StorePrice]) -> StorePrice | None:
-    in_stock = [p for p in prices if p["in_stock"]]
-    pool = in_stock if in_stock else prices
-    if not pool:
+    # Reference prices (Gismondi review quotes) are NOT real inventory — exclude
+    # them from best_price selection entirely. They are still kept in `prices`
+    # for the synthesizer to render as a "Reference price" footnote.
+    real = [p for p in prices if not p.get("is_reference")]
+    if not real:
         return None
-    return min(pool, key=lambda p: (p["price"], not p["on_sale"], p["store"]))
+    in_stock = [p for p in real if p.get("in_stock")]
+    pool = in_stock if in_stock else real
+    return min(pool, key=lambda p: (p["price"], not p.get("on_sale", False), p["store"]))
 
 
 def _extract_bcliquor(results: list[dict]) -> list[tuple[MergedWineRecord, str, str, int | None]]:
@@ -238,15 +242,6 @@ def _extract_winealign(
     return out
 
 
-_GISMONDI_CHANNEL_MAP = {
-    "bc liquor": "bcliquor",
-    "bcl": "bcliquor",
-    "marquis": "marquis",
-    "everything wine": "everythingwine",
-    "okanagan cellars": "okanagan",
-}
-
-
 def _extract_gismondi(
     results: list[dict],
 ) -> list[tuple[str, str, int | None, list[CriticReviewMerged], list[StorePrice]]]:
@@ -263,31 +258,30 @@ def _extract_gismondi(
             "drink_window": None,
         }
         # Gismondi reviews include the price + channel observed at review time.
-        # These are the only retail-price hints for many BC wines that the
-        # store-search tools cannot match exactly, so we promote them into the
-        # wine record as a StorePrice. The URL points at the review (not the
-        # cart), which is still useful to the user.
+        # These are NOT live inventory checks — Gismondi is a critic, not a
+        # retailer. We still promote them so price-constrained queries
+        # ("BC Riesling under $30") have something to render, but they are
+        # tagged `is_reference=True` so synthesis renders them as a "Reference
+        # price (per Gismondi review)" note rather than as a row in the
+        # Where-to-buy table. The URL points at the review.
         prices: list[StorePrice] = []
         price = r.get("price")
         if price is not None:
-            channel = (r.get("price_channel") or "").lower()
-            store = "winery"
-            for hint, mapped in _GISMONDI_CHANNEL_MAP.items():
-                if hint in channel:
-                    store = mapped
-                    break
             try:
                 price_f = float(price)
             except (TypeError, ValueError):
                 price_f = None
             if price_f is not None:
+                channel = (r.get("price_channel") or "").strip()
                 prices.append({
-                    "store": store,
+                    "store": "gismondi_ref",
                     "price": price_f,
                     "on_sale": False,
-                    "in_stock": True,  # Gismondi does not track inventory
-                    "url": r.get("url"),
+                    "in_stock": False,    # unknown — never claim stock from a review
+                    "url": r.get("url"),  # link back to the Gismondi review
                     "stock_qty": None,
+                    "is_reference": True,
+                    "ref_channel": channel or None,  # raw channel string for the note
                 })
         out.append((prod_slug, wine_slug, vintage, [review], prices))
     return out

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BC Wine AI — Find, evaluate, and learn about BC wines</title>
+    <title>BC Wine</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -11,93 +11,70 @@
 </head>
 <body>
 
-<header class="navbar">
-    <div class="container nav-wrapper">
-        <div class="logo"><a href="/">BC Wine AI</a></div>
-        <nav class="nav-menu">
-            <a href="#features" class="nav-link">Features</a>
-            <a href="#" class="nav-link" id="nav-chat">Chat</a>
-        </nav>
+<header class="site-header">
+    <div class="container">
+        <span class="brand">BC Wine</span>
     </div>
 </header>
 
-<section class="hero">
-    <div class="container hero-content">
-        <h1 class="hero-title">Ask anything about BC wine.</h1>
+<main class="landing">
+    <section class="hero container">
+        <h1 class="hero-title">Conversational research for BC wines.</h1>
         <p class="hero-subtitle">
-            Inventory, prices, critic scores, and pairings — across every major
-            BC retailer and Canada's top wine reviewers — in one chat.
+            Search live inventory across every major BC retailer, read professional
+            critic reviews, and get food pairing guidance &mdash; all in one conversation.
         </p>
         <button class="btn-primary btn-large" id="open-chat">Start chatting</button>
-    </div>
-</section>
+    </section>
 
-<section class="features-section" id="features">
+    <section class="capabilities container">
+        <article class="cap">
+            <h3>Inventory and pricing</h3>
+            <p>Search BC Liquor Stores, Marquis, Okanagan Cellars, and Everything Wine together. See current prices and stock side by side.</p>
+        </article>
+        <article class="cap">
+            <h3>Critic reviews</h3>
+            <p>Scores and tasting notes from WineAlign, Anthony Gismondi, and Robert Parker, attributed to the reviewer that wrote them.</p>
+        </article>
+        <article class="cap">
+            <h3>Food pairings</h3>
+            <p>Sommelier-style reasoning for any cuisine, with recommendations drawn from the British Columbia wine catalogue.</p>
+        </article>
+    </section>
+</main>
+
+<footer class="site-footer">
     <div class="container">
-        <h2 class="section-title">Everything you need, one conversation.</h2>
-        <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>
-                </div>
-                <h3>Inventory & Prices</h3>
-                <p>Search 5 BC retailers simultaneously — BC Liquor, Marquis, Okanagan Cellars, Everything Wine — with real-time stock and pricing.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                </div>
-                <h3>Critic Reviews</h3>
-                <p>Professional reviews from WineAlign, Anthony Gismondi, and Robert Parker — scores, tasting notes, and drink windows from Canada's top critics.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8h1a4 4 0 010 8h-1"/><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
-                </div>
-                <h3>Food Pairings</h3>
-                <p>Sommelier-grade pairing recommendations for any cuisine — from classic steak dinners to Korean BBQ and Thai green curry.</p>
-            </div>
-        </div>
+        <p>Powered by <a href="https://sumai.ca" target="_blank" rel="noopener noreferrer">SUM AI</a></p>
     </div>
-</section>
+</footer>
 
-<!-- Chat overlay -->
-<div class="demo-chat-overlay" id="chat-overlay">
-    <div class="demo-chat-modal">
-        <header class="demo-chat-header">
-            <div>
-                <div class="demo-chat-header-title">BC Wine AI</div>
-                <div class="demo-chat-header-subtitle">Ask about any BC wine</div>
-            </div>
-            <button class="demo-chat-close" id="chat-close">&times;</button>
+<div class="chat-overlay" id="chat-overlay">
+    <div class="chat-shell">
+        <header class="chat-header">
+            <div class="chat-status" id="chat-status" aria-live="polite">Ready</div>
+            <button class="chat-close" id="chat-close" aria-label="Close chat">Close</button>
         </header>
 
-        <div class="demo-chat-messages" id="chat-messages">
-            <div class="demo-chat-message ai">
-                Hi! I'm the BC Wine AI assistant. Ask me about BC wines — prices, availability, critic reviews, food pairings, or anything else. What would you like to know?
+        <div class="chat-messages-wrap">
+            <div class="chat-messages" id="chat-messages">
+                <div class="chat-message ai">
+                    Ask about BC wines: prices, availability, critic reviews, food pairings, or anything else.
+                </div>
             </div>
         </div>
 
-        <div class="demo-chat-typing" id="chat-typing">
-            <span></span><span></span><span></span>
-        </div>
-
-        <div class="demo-chat-input-area">
-            <textarea class="demo-chat-input" id="chat-input"
-                      placeholder="e.g., Find me a BC Pinot Noir under $50..."
-                      rows="1"></textarea>
-            <button class="demo-chat-send" id="chat-send">
-                <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
-            </button>
+        <div class="chat-input-area">
+            <div class="chat-input-row">
+                <textarea class="chat-input" id="chat-input"
+                          rows="1"></textarea>
+                <button class="chat-send" id="chat-send" aria-label="Send">
+                    <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                </button>
+            </div>
         </div>
     </div>
 </div>
-
-<footer class="footer">
-    <div class="container footer-content">
-        <p>BC Wine AI &mdash; Powered by <a href="https://sumai.ca" target="_blank">SUM AI</a></p>
-    </div>
-</footer>
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="/static/app.js"></script>
