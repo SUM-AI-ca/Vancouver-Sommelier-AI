@@ -49,6 +49,13 @@ class OkanaganCellarsResult(BaseModel):
 
 # ── Core Search ─────────────────────────────────────────────────────
 
+def _clean_query(q: str) -> str:
+    """Strip apostrophes and smart quotes — Okanagan Cellars' backend search
+    returns 0 results when these are present (e.g. "Quails' Gate" → 0,
+    "Quails Gate" → 15). Stripping is safe for the other punctuation we see."""
+    return q.replace("'", "").replace("’", "").replace("‘", "")
+
+
 async def search_okanagan_cellars(query: str) -> list[OkanaganCellarsResult]:
     """
     Search Okanagan Cellars wine inventory.
@@ -57,7 +64,7 @@ async def search_okanagan_cellars(query: str) -> list[OkanaganCellarsResult]:
         query: Wine name, winery, or varietal (e.g., "tantalus", "checkmate", "pinot noir")
     """
     params = {
-        "q": query,
+        "q": _clean_query(query),
         "show_on_web": "true",
         "varital_name": "",
         "no_item_found": "No item found.",

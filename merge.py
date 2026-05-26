@@ -216,7 +216,9 @@ def _extract_everythingwine(results: list[dict]) -> list[tuple[MergedWineRecord,
     return out
 
 
-def _extract_winealign(results: list[dict]) -> list[tuple[str, str, int | None, list[CriticReviewMerged]]]:
+def _extract_winealign(
+    results: list[dict],
+) -> list[tuple[str, str, int | None, list[CriticReviewMerged], list[StorePrice]]]:
     out = []
     for r in results:
         name = r.get("wine_name", "")
@@ -232,11 +234,22 @@ def _extract_winealign(results: list[dict]) -> list[tuple[str, str, int | None, 
                 "drink_window": cr.get("drink_window"),
             })
         if reviews:
-            out.append((prod_slug, wine_slug, vintage, reviews))
+            out.append((prod_slug, wine_slug, vintage, reviews, []))
     return out
 
 
-def _extract_gismondi(results: list[dict]) -> list[tuple[str, str, int | None, list[CriticReviewMerged]]]:
+_GISMONDI_CHANNEL_MAP = {
+    "bc liquor": "bcliquor",
+    "bcl": "bcliquor",
+    "marquis": "marquis",
+    "everything wine": "everythingwine",
+    "okanagan cellars": "okanagan",
+}
+
+
+def _extract_gismondi(
+    results: list[dict],
+) -> list[tuple[str, str, int | None, list[CriticReviewMerged], list[StorePrice]]]:
     out = []
     for r in results:
         name = r.get("title", "")
@@ -249,11 +262,40 @@ def _extract_gismondi(results: list[dict]) -> list[tuple[str, str, int | None, l
             "value_rating": None,
             "drink_window": None,
         }
-        out.append((prod_slug, wine_slug, vintage, [review]))
+        # Gismondi reviews include the price + channel observed at review time.
+        # These are the only retail-price hints for many BC wines that the
+        # store-search tools cannot match exactly, so we promote them into the
+        # wine record as a StorePrice. The URL points at the review (not the
+        # cart), which is still useful to the user.
+        prices: list[StorePrice] = []
+        price = r.get("price")
+        if price is not None:
+            channel = (r.get("price_channel") or "").lower()
+            store = "winery"
+            for hint, mapped in _GISMONDI_CHANNEL_MAP.items():
+                if hint in channel:
+                    store = mapped
+                    break
+            try:
+                price_f = float(price)
+            except (TypeError, ValueError):
+                price_f = None
+            if price_f is not None:
+                prices.append({
+                    "store": store,
+                    "price": price_f,
+                    "on_sale": False,
+                    "in_stock": True,  # Gismondi does not track inventory
+                    "url": r.get("url"),
+                    "stock_qty": None,
+                })
+        out.append((prod_slug, wine_slug, vintage, [review], prices))
     return out
 
 
-def _extract_robert_parker(results: list[dict]) -> list[tuple[str, str, int | None, list[CriticReviewMerged]]]:
+def _extract_robert_parker(
+    results: list[dict],
+) -> list[tuple[str, str, int | None, list[CriticReviewMerged], list[StorePrice]]]:
     out = []
     for r in results:
         name = r.get("display_name", "")
@@ -281,7 +323,7 @@ def _extract_robert_parker(results: list[dict]) -> list[tuple[str, str, int | No
                 "drink_window": drink_window,
             })
         if reviews:
-            out.append((prod_slug, wine_slug, vintage, reviews))
+            out.append((prod_slug, wine_slug, vintage, reviews, []))
     return out
 
 
@@ -319,7 +361,13 @@ def merge_tool_results(messages: list[BaseMessage]) -> dict[str, MergedWineRecor
         tool_name = getattr(msg, "name", None)
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
         parsed_tool, results = _parse_tool_content(content)
-        effective_tool = tool_name or parsed_tool
+        # Prefer the tool name embedded in the JSON payload (set by our @tool
+        # wrappers to the canonical bare name, e.g. "search_bcliquor"). Fall back
+        # to msg.name, which arrives with the LangChain binding suffix
+        # ("search_bcliquor_tool") and must be stripped before lookup.
+        effective_tool = parsed_tool or tool_name
+        if effective_tool and effective_tool.endswith("_tool"):
+            effective_tool = effective_tool[:-5]
         if not effective_tool or effective_tool not in TOOL_TO_EXTRACTOR:
             continue
         kind, extractor = TOOL_TO_EXTRACTOR[effective_tool]
@@ -347,11 +395,13 @@ def merge_tool_results(messages: list[BaseMessage]) -> dict[str, MergedWineRecor
 
         elif kind == "critic":
             critic_items = extractor(results)
-            for ps, ws, v, reviews in critic_items:
+            for ps, ws, v, reviews, crit_prices in critic_items:
                 key = _make_key(ps, ws, v)
                 match_key = _find_match(key, ps, ws, v, merged)
                 if match_key:
                     merged[match_key]["critic_reviews"].extend(reviews)
+                    if crit_prices:
+                        merged[match_key]["prices"].extend(crit_prices)
                 else:
                     rec: MergedWineRecord = {
                         "normalized_key": key,
@@ -359,7 +409,7 @@ def merge_tool_results(messages: list[BaseMessage]) -> dict[str, MergedWineRecor
                         "producer": ps.title() if ps else "",
                         "vintage": v,
                         "grape": [],
-                        "prices": [],
+                        "prices": list(crit_prices),
                         "best_price": None,
                         "critic_reviews": reviews,
                         "avg_critic_score": None,

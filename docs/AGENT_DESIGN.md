@@ -484,19 +484,24 @@ class AgentState(TypedDict):
 
 | Node | Type | Function | LLM call? |
 |---|---|---|---|
-| `orchestrator` | LangGraph ReAct (`create_react_agent`) | Intent classification, tool selection, post-tool reasoning | Yes — Gemini 3.5 Flash |
-| `tools` | `ToolNode` | Dispatches `tool_calls` from `orchestrator` to wrapped tool functions | No |
-| `merge_results` | Custom Python | Normalizes wine names, dedups across stores, aggregates into `wine_context` | No |
-| `format_response` | Custom (single LLM call) | Pure formatting — convert the merged data + the orchestrator's plan into a clean markdown response | Yes — Gemini 3.5 Flash |
+| `orchestrator` | Custom Python wrapping `ChatGoogleGenerativeAI.bind_tools(TOOLS)` | Intent classification, tool selection, post-tool reasoning. Temperature 0.2. Receives user prefs + cached wine_context as system context. | Yes — Gemini 3.5 Flash |
+| `tools` | `tool_node_with_logging` wrapping `ToolNode` | Dispatches `tool_calls` to wrapped tool functions, then appends each call to `tool_call_log` for downstream auditing | No |
+| `merge_results` | Custom Python | Walks `state["messages"]`, parses `ToolMessage` JSON, normalizes wine names, dedups across stores, aggregates into `wine_context`. Also harvests `update_preferences` calls. | No |
+| `format_response` | Custom (single LLM call) | Synthesis pass. Takes user query + orchestrator draft + compact `wine_context` + supplementary tool outputs (pairing reasoning, Tavily answers) and emits the canonical markdown skeleton (§6.5). Replaces the orchestrator's last `AIMessage` in-place by reusing its `id` so streaming consumers see only the synthesized text. Temperature 0.0. Skipped for off-topic turns (empty `wine_context` AND empty aux outputs). | Yes — Gemini 3.5 Flash |
+
+#### Tool-rounds safety net
+
+`should_continue` enforces a hard cap of `MAX_TOOL_ROUNDS = 3` rounds of tool calls per user turn (counted as AIMessages-with-tool_calls since the most recent HumanMessage). When the cap is hit, the graph short-circuits straight to `merge_results` even if the orchestrator wanted another round. This protects against runaway retry loops that previously hit `recursion_limit` and crashed the run. `format_response_node` includes a fallback path for this case: if the most recent AIMessage still has `tool_calls`, it is reused as the intent signal and synthesis writes the final response from data alone.
 
 ### 4.3 Edges
 
 ```
 START
   └→ orchestrator
-       ├→ tools  (if tool_calls present)
+       ├→ tools  (if tool_calls present AND tool rounds < MAX_TOOL_ROUNDS)
        │    └→ orchestrator  (ReAct self-loop)
-       └→ merge_results  (when orchestrator emits AIMessage with no tool_calls)
+       └→ merge_results  (when orchestrator emits AIMessage with no tool_calls,
+                          OR when MAX_TOOL_ROUNDS is reached)
              └→ format_response
                   └→ END
 ```
@@ -627,39 +632,56 @@ The other six follow the same template. Each tool's description **must** include
 
 ### 6.4 Behavioral Rules
 
-1. **Parallelize inventory checks.** When the user asks "where can I buy X" or wants pricing, emit `tool_calls` for `search_bcliquor`, `search_marquis`, `search_okanagan_cellars`, and `search_everything_wine` in a single response.
+The orchestrator's system prompt encodes 15 rules. The first 10 are the original behavior; rules 11–15 were added across quality-eval iterations (see §16.5) to fix specific failure modes (tool storms, fabricated retailers, Tavily abuse, link omission).
+
+1. **Parallelize inventory checks.** When the user asks "where can I buy X" or wants pricing, emit `tool_calls` for `search_bcliquor_tool`, `search_marquis_tool`, `search_okanagan_cellars_tool`, and `search_everything_wine_tool` in a single response.
 2. **Never invent.** If no tool returned a score, vintage, or price, do not state one.
 3. **Attribute critics by name.** Quote the critic and source when citing a review.
 4. **Cite stores by name** when reporting prices and inventory.
 5. **Prefer in-stock results** when ranking recommendations.
 6. **Use Tavily sparingly.** It is paid. Only call it for non-Western pairing questions, regional/educational queries, or to disambiguate a wine name when all store tools return empty.
-7. **Use `reasoning_pair_wine` for non-trivial pairings.** Common pairings (steak + Cabernet, salmon + Pinot) — answer from built-in knowledge. Non-trivial — invoke the sub-LLM.
+7. **Use `reasoning_pair_wine_tool` for non-trivial pairings.** Common pairings (steak + Cabernet, salmon + Pinot) — answer from built-in knowledge. Non-trivial — invoke the sub-LLM.
 8. **Respect the multi-turn state.** Before recommending a wine, scan `wine_context` — if the user already saw it last turn, reference it as such ("the Tantalus Riesling I mentioned earlier").
 9. **Resolve references.** "The second one" / "the cheaper one" / "tell me more" → resolve against `last_recommendations` and `wine_context`.
 10. **Calibrate depth to audience.** A beginner question gets a friendly, jargon-light answer; a sommelier question gets the full critic detail. Read the user's vocabulary as a cue.
+11. **Always include links.** Wrap each cited store / critic review in a markdown link using the URL from the tool result.
+12. **Hard cap on tool calls per turn.** At most 2 rounds: round 1 is a parallel fan-out; round 2 is an optional targeted follow-up. Total ≤ 8 calls. Backed by `MAX_TOOL_ROUNDS` in `agent.py` (§4.2) — exceeding the prompt cap still triggers the code-level short-circuit.
+13. **Off-topic queries: respond directly, no tools.** Weather / sports / jokes get a 1–2 sentence answer + gentle redirect to wine. Calling Tavily for these is forbidden.
+14. **Tavily is FORBIDDEN for "where can I buy / pricing / inventory" questions.** Tavily routinely fabricates retailer URLs (Legacy Liquor, ZYN.ca, BSW Liquor) that then propagate into the response. When store tools come back empty, tell the user so — do not paper over with web search.
+15. **Never invent retailers.** Only mention stores that appear in tool results: BC Liquor, Marquis Wine Cellars, Everything Wine, Okanagan Cellars. No out-of-province retailers unless they appear verbatim in a tool response.
 
 ### 6.5 Output Contract
 
-Final synthesis (the `format_response` node) shapes the answer using this skeleton:
+The synthesis pass (`format_response_node`, §4.2) reads `SYNTHESIS_SYSTEM_PROMPT` and emits the canonical skeleton:
 
 ```
-[Lead recommendation — 1 sentence]
+[Lead — one sentence naming the specific wine, producer, and vintage if known]
 
 **Why this wine**
-- Critic scores (with attribution)
-- Stylistic notes (drawn from tasting notes)
-- Drink window (if available)
+- Critic scores (attributed: "John Szabo (WineAlign) — 92 pts")
+- Style / tasting notes (1–2 lines from tool data)
+- Drink window if available
 
 **Where to buy**
+
 | Store | Price (CAD) | Availability |
 |-------|-------------|--------------|
-| ... | ... | ... |
+| [BC Liquor](https://www.bcliquorstores.com/product/...) | $34.99 | In stock (612 units across 73 stores) |
+| [Marquis Wine Cellars](https://www.marquis-wines.com/...) | $39.99 | 13 bottles in stock |
+| [Everything Wine](https://www.everythingwine.ca/...) | $36.50 | Warehouse delivery |
 
-**Pairing note** (only if user asked or relevant)
-[1–2 sentences]
-
-[Optional disclaimer if any tool failed]
+**Pairing note** (only when the user mentioned a food or dish)
+[1–2 sentences explaining the pairing logic]
 ```
+
+The synthesizer follows these structural rules:
+
+- **Treat the orchestrator's draft as the intent signal** — which wines to feature, which `wine_context` entries are fuzzy-search noise. The synthesizer reformats, it does not re-select.
+- **One row per store, all stores that carry each wine.** Do not collapse to `best_price` only — users compare across retailers.
+- **OMIT the "Where to buy" section entirely** for a featured wine if it has zero store rows in the data. Do not invent placeholders like "Retail Database / - / No current local retail listings" — empty placeholder tables are worse than no table.
+- **Specific-wine query, no exact match in data** → say "We could not find this exact wine at the BC retailers we checked", then recommend 1–2 close alternatives from the **same varietal and region**. Never silently swap in unrelated wines (e.g., a French Bordeaux when the user asked about a BC Syrah).
+- **Recommendation query** (pairing, "under $X", "best for Y") → the wine data IS the answer pool. Pick 2–3 wines from it; never end such a query with "we could not find anything" if any matching wine exists.
+- **Critic scores require an exact bottling match.** A review of "Painted Rock Syrah Cabernet Sauvignon 2021" does not back a claim about "Painted Rock Syrah 2021" — they are different wines. Say "no critic reviews available for this specific bottling" rather than borrow scores from the adjacent bottling.
 
 The frontend renders this markdown into HTML before showing it to the user (see §13).
 
@@ -805,7 +827,46 @@ class MergedWine(BaseModel):
 - The `avg_critic_score` field, if computed, uses **only** scores from the same source family (e.g., all WineAlign critics), normalized to /100, and is presented with the count: "Avg WineAlign: 92.5 (n=3)".
 - Display the individual critic reviews alongside any aggregate.
 
-### 8.6 Implementation Location
+### 8.6 Critic-derived StorePrice (Gismondi)
+
+`GismondiResult` carries `price`, `price_format`, and `price_channel` fields that describe the retail price the critic observed at review time. These are the only retail-price hints available for many BC wines whose names do not exact-match what the store-search tools return. The merge step therefore promotes them into the wine record as synthetic `StorePrice` entries.
+
+```python
+# inside _extract_gismondi
+if r.get("price") is not None:
+    channel = (r.get("price_channel") or "").lower()
+    store = next(
+        (mapped for hint, mapped in _GISMONDI_CHANNEL_MAP.items() if hint in channel),
+        "winery",
+    )
+    prices.append({
+        "store": store,
+        "price": float(r["price"]),
+        "on_sale": False,
+        "in_stock": True,            # Gismondi does not track inventory
+        "url": r.get("url"),         # points at the review, not a cart
+        "stock_qty": None,
+    })
+```
+
+Channel mapping: `"BC Liquor" → bcliquor`, `"Marquis" → marquis`, `"Everything Wine" → everythingwine`, `"Okanagan Cellars" → okanagan`. Anything else (e.g., direct-from-winery) falls through to `store="winery"`. The URL points at the Gismondi review so the user can see the context for the price quote.
+
+For symmetry, `_extract_winealign` and `_extract_robert_parker` also return the 5-tuple `(prod_slug, wine_slug, vintage, reviews, prices)` with an empty `prices` list. The merge loop unpacks uniformly and extends each matched record's `prices` array, so `best_price` selection (§8.4) automatically picks up Gismondi-derived prices alongside store-tool prices.
+
+### 8.7 Tool-name resolution in `merge_tool_results`
+
+The JSON payload our `@tool` wrappers emit carries a canonical bare name in its `"tool"` field (`"search_bcliquor"`), but the LangChain `ToolMessage.name` arrives with the binding suffix (`"search_bcliquor_tool"`). Merge prefers the payload's canonical name and falls back to `msg.name` with the `_tool` suffix stripped:
+
+```python
+parsed_tool, results = _parse_tool_content(content)
+effective_tool = parsed_tool or tool_name
+if effective_tool and effective_tool.endswith("_tool"):
+    effective_tool = effective_tool[:-5]
+```
+
+This was a silent bug for a long time — without the strip, every `ToolMessage` failed the `effective_tool in TOOL_TO_EXTRACTOR` check and `wine_context` stayed empty. Responses still cited stores because the orchestrator's raw draft was visible to it through `state["messages"]`, but the synthesis pass was operating on an empty data blob and could not enforce the skeleton properly. Fixing this was the single biggest quality jump in the eval history (see §16.5, R4 → R5).
+
+### 8.8 Implementation Location
 
 `merge.py` exposes:
 
@@ -955,7 +1016,20 @@ The orchestrator's system prompt instructs it to:
 
 **A single tool failure must never abort the turn.** If three of four store tools fail, the agent must still answer using the one that succeeded, while noting reduced coverage in its final response.
 
-### 10.4 Logging
+### 10.4 Query Sanitization (`_clean_query`)
+
+Each store / critic tool runs its incoming `query` through a tiny `_clean_query` helper that strips ASCII and smart apostrophes before passing it to the backend:
+
+```python
+def _clean_query(q: str) -> str:
+    return q.replace("'", "").replace("’", "").replace("‘", "")
+```
+
+The motivation is a confirmed backend pathology on Okanagan Cellars' search: `"Quails' Gate"` returns **0 results**, `"Quails Gate"` returns **15 results**. The behaviour is silent — no error, just a zero-row response — so the agent would naturally conclude "this winery isn't in stock here" and move on. Stripping the apostrophe before sending the query unblocks 10–15+ wines per affected query. The other store backends (BC Liquor, Marquis, Everything Wine) tolerate apostrophes fine, but applying the same `_clean_query` uniformly is harmless and protects against future drift.
+
+`gismondi_tool.py` already runs its FTS5 input through a stricter sanitizer (`_sanitize_fts_query`) that strips all non-`\w\s` characters, since apostrophes have query-language meaning in FTS5 and would otherwise raise a syntax error. `tavily_tool.py` is unaffected — apostrophes pass through full-text web search cleanly.
+
+### 10.5 Logging
 
 Each tool call (success or failure) appends an entry to `state["tool_call_log"]`:
 
@@ -1355,56 +1429,96 @@ Action item: add a one-line `pytest.mark.smoke` test that simply imports each to
 
 ### 16.2 Layer 2 — Golden Queries
 
-`tests/golden_queries.py` holds 12+ hand-written queries. Each entry:
+`tests/golden_queries.py` holds 38 hand-written queries across 13 categories. Each entry carries expected-tool / forbidden-tool / coverage / multi-turn fields:
 
 ```python
 {
-    "id": "GQ-001",
-    "query": "Where can I buy CheckMate Chardonnay 2019 in BC?",
-    "must_call_tools": [
-        "search_bcliquor",
-        "search_marquis",
-        "search_okanagan_cellars",
-        "search_everything_wine",
+    "id": "INV-001",
+    "category": "INV",
+    "query": "Where can I buy Mission Hill Reserve Pinot Noir 2021 in BC?",
+    "expected_tools_all_of": [
+        "search_bcliquor", "search_marquis",
+        "search_okanagan_cellars", "search_everything_wine",
     ],
-    "must_mention": ["CheckMate", "Chardonnay", "2019"],
-    "must_not_mention": [],
-    "forbid_hallucination_of": ["price", "score", "vintage"],
+    "expected_tools_any_of": [],
+    "forbidden_tools": ["search_tavily"],
+    "must_mention": ["Mission Hill", "Pinot Noir"],
+    "min_distinct_stores": 3,
 }
 ```
 
-Coverage targets:
-- 3 inventory queries (parallel fan-out).
-- 2 critic-review queries.
-- 2 pairing queries (one Western, one non-Western).
-- 2 educational queries.
-- 2 multi-turn (reference resolution).
-- 1 fallback-chain (wine not in any store).
+Categories: `INV` (inventory/parallel fan-out), `CRI` (critic queries), `PAIR-W` / `PAIR-C` / `PAIR-N` (Western / complex / non-Western pairing), `EDU` (regional knowledge), `MT-REF` / `MT-PREF` (multi-turn reference resolution / preference inference), `DISC` (open-ended discovery), `BEG` (beginner-tier), `SOM` (sommelier-tier), `FB` (fallback — wine not in stock), `OFF` (off-topic redirect).
 
-`tests/test_agent.py` runs each golden query through the compiled graph and asserts:
-- All `must_call_tools` were invoked.
-- All `must_mention` strings appear in the final response (case-insensitive).
-- None of the `must_not_mention` strings appear.
-- For each field in `forbid_hallucination_of`, the value mentioned in the response also appears in at least one tool result (no fabrication).
+`tests/quality_eval.py` runs each query (or category subset) through the compiled graph and writes:
+- `tests/results/<YYYYMMDD-HHMMSS>/results.json` — full structured data
+- `tests/results/<YYYYMMDD-HHMMSS>/summary.md` — Claude-readable summary
+- `tests/results/<YYYYMMDD-HHMMSS>/transcripts/<ID>.md` — per-query tool I/O + final response
 
-### 16.3 Layer 3 — LLM-as-Judge
+CLI:
+```bash
+python -m tests.quality_eval                          # full suite
+python -m tests.quality_eval --only INV,CRI           # category filter
+python -m tests.quality_eval --id INV-001             # single query
+python -m tests.quality_eval --dry-run                # first 2 queries
+python -m tests.quality_eval --skip-judge             # deterministic metrics only
+```
+
+### 16.3 Layer 3 — Deterministic Metrics (`tests/metrics.py`)
+
+For each turn, the eval computes:
+
+- **Tool orchestration** — precision / recall / F1 against `expected_tools_*`, plus `forbidden_called` and per-turn-limit checks (`search_winealign ≤ 2`, `search_robert_parker ≤ 1`, `search_tavily ≤ 1`). Tool names are normalized via `_strip_tool_suffix` so the binding's `_tool` suffix doesn't trip the comparison.
+- **Hallucination** — for each declared field family (winery / score / vintage / price), check whether the response's mention appears verbatim in at least one tool result.
+- **Coverage** — distinct stores cited (for buyability queries), distinct critics cited (for review queries).
+- **Output contract** — regex-checked presence of Lead / "Why this wine" / "Where to buy" table / "Pairing note". Bullet-list fallback for the table is accepted when the section names ≥ 2 known stores with prices.
+- **Mention / forbidden mention** — golden-query-defined required and prohibited substrings.
+- **Latency** — wall time per turn.
+- **Reference resolution** (multi-turn) — does turn N's response reference the wine from turn N-1?
+
+### 16.4 Layer 4 — LLM-as-Judge (`tests/judge.py`)
 
 ```python
 JUDGE_RUBRIC = """
-You evaluate a wine agent's response. Score 1-5 on:
-- Accuracy: all factual claims supported by tool results
+Score 1–5 on:
+- Accuracy: every claim supported by tool results
 - Citation: critics named, stores named
 - Completeness: addresses all parts of the user's question
-- Style: clear English, no rambling
-Return JSON: {accuracy, citation, completeness, style, overall, notes}
+- Style: clear, no rambling
+- Helpfulness: actionable next step
+- Structure: follows the synthesis skeleton
+Return JSON: {accuracy, citation, completeness, style, helpfulness, structure,
+              overall, issues[], strengths[]}
 """
 ```
 
-Judge model: `gemini-3.5-flash` (same as the system, but a separate temperature=0 instance). Aggregate scores across the golden-query set → simple regression dashboard.
+Judge model: `gemini-3.5-flash` with `temperature=0` (separate from the system-under-test). Aggregate scores across the suite power a simple regression dashboard. The Judge receives the user query, the tool-results blob, and the final response — it does NOT see the orchestrator's draft or internal state.
 
-### 16.4 Layer 4 — Trace Review via LangSmith
+### 16.5 Iteration History
 
-After running the golden-query suite, open the LangSmith project (§14) and spot-check failing or borderline cases. The trace tells you exactly which tool was called with what arguments and what it returned — much faster than re-running the agent locally.
+The eval has been the primary driver of architectural decisions. Each run produces a timestamped folder under `tests/results/`. Headline trajectory across the first eight runs:
+
+| Run | Headline change(s) | Judge overall | Tool orch pass | Hallucination | Output structure | Errors |
+|---|---|---|---|---|---|---|
+| R1 | baseline | 3.57 | 34% | 18.2% | 1.50 / 4 | 1 |
+| R2 | synthesis LLM call activated; temperatures lowered (orch 0.3 → 0.2, synthesis 0.2 → 0.0) | 3.82 | 29% | 15.6% | 1.38 | 0 |
+| R3 | tighter synthesis prompt; `output_contract_score` accepts narrative bullets | 3.59 | 41% | 13.6% | 2.02 | 1 |
+| R4 | content-list extraction fix (Gemini's `[{type:text,...}]` no longer leaks into responses) | 3.55 | 11% | 13.6% | 1.98 | 1 |
+| R5 | **`merge.py` tool-name resolution fix** — `wine_context` actually populated for the first time. Metric normalization for `_tool` suffix. | 3.38 | 89% | 8.9% | 2.76 | 0 |
+| R6 | synthesis prompt rebalanced (follow orchestrator's selection, multi-store rows) | **3.91** | 86% | 13.6% | 3.05 | 1 |
+| R7 | `MAX_TOOL_ROUNDS=3` safety net; Rule 12/14 tightened; query-classification rule | 3.51 | 96% | 17.8% | 2.67 | 0 |
+| R8 | partial rollback of R7 synthesis prompt + Gismondi-price extraction in merge | 3.44 | **100%** | 8.9% | 2.49 | 0 |
+
+Patterns visible in the trajectory:
+
+- **Pure prompt iteration hit diminishing returns around R3–R4**. The single biggest jump in deterministic metrics (R4 → R5, tool orch 11% → 89%) was an unblocking code fix, not a prompt tweak.
+- **Synthesis rule pressure is multi-objective and unstable.** Tightening anti-hallucination simultaneously suppresses helpful alternatives; loosening it brings back fabricated wineries. The yo-yo on Judge overall between R5 and R8 is the visible signature of that trade-off.
+- **Code-level safety nets compound cleanly.** `MAX_TOOL_ROUNDS`, the metric's `_strip_tool_suffix`, and Gismondi's synthetic StorePrice are independent improvements that each lifted a specific failure mode without regressing another.
+
+The next category of wins is **architectural rather than prompt-level** — see §18.2 for candidates (query-type routing, stricter merge fuzzy matching, deterministic table rendering).
+
+### 16.6 Layer 5 — Trace Review via LangSmith
+
+After running the suite, open the LangSmith project (§14) and spot-check failing or borderline cases. The trace tells you exactly which tool was called with what arguments and what it returned — much faster than re-running the agent locally.
 
 ---
 
@@ -1492,6 +1606,17 @@ Not needed if the frontend is served from the same origin as the API. The deploy
 5. **Gismondi DB rebuild schedule.** The `gismondi-canada-wines` git submodule auto-updates on a schedule. The `update_db.yml` workflow already rebuilds `data/wines.db` on Tue/Thu/Sat. Confirm the deploy pipeline picks up the updated DB on each redeploy.
 
 ### 18.2 Future Improvements
+
+**Architectural (surfaced by quality-eval iteration — see §16.5):**
+
+- **Query-type routing.** All queries currently flow through the same `orchestrator → tools → merge → format_response` path. A cheap 1 s classifier could route off-topic queries to a direct-response path (bypass synthesis, ~3 s round-trip), specific-wine queries to a smaller tool fan-out, and recommendation queries to the full path. Latency, cost, and quality all benefit.
+- **Deterministic Where-to-buy rendering.** The synthesizer occasionally invents store rows ("Retail Database", placeholder URLs) or omits valid prices. Render the Where-to-buy table from `wine_context["prices"]` in Python; let the LLM only write the narrative sections (Lead / Why / Pairing). Hallucination in the most user-visible piece of data drops to zero.
+- **Stricter merge fuzzy matching.** `_find_match` currently requires `prod_slug` to be equal — when one source has `producer = "Tantalus Vineyards"` and another has the producer embedded in the wine title (`"Tantalus Riesling"`, producer slug empty), the two records do not merge and the user sees critic-only and store-only rows for the same wine. Treat empty `prod_slug` as a wildcard, or fuzzy-match producer slugs.
+- **BC Liquor `is_bc_vqa` parsing.** Certain BC Liquor results (observed on `"Quails Gate"`) return a value for `is_bc_vqa` that fails Pydantic boolean validation, dropping the entire result set. Coerce to `bool` with a tolerant parser inside `bcliquor_tool.py`.
+- **WineAlign `value_rating` + `price` fields.** The merge currently keeps `value_rating` (0–5 stars) on `CriticReviewMerged` but the synthesis prompt never surfaces it. Either render it ("4 stars — great value") or drop it from the schema. WineAlign's listing prices, similarly, could feed `wine_context["prices"]` the same way Gismondi's now does (§8.6).
+- **Consumer rating / votes display.** `MergedWineRecord` carries `consumer_rating` and `consumer_votes` from BC Liquor but the synthesis prompt doesn't reference them. Adding a one-line "consumer score (n votes)" to the Why section provides cheap social proof.
+
+**Product / UX:**
 
 - **Korean-language output.** Detect Hangul in the user's first message → set `state["user_language"] = "ko"` → pass to the synthesis prompt with an instruction to render in Korean using 존댓말 and natural sommelier register. Wine names stay in original spelling.
 - **Per-node model tiering.** Once cost matters, downgrade `format_response` to a smaller/cheaper Gemini variant and reserve full Flash power for the orchestrator.

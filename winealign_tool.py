@@ -279,6 +279,11 @@ def _parse_critic_reviews(html: str) -> list[CriticReview]:
 _session = WineAlignSession()
 
 
+def _clean_query(q: str) -> str:
+    """Strip apostrophes / smart quotes for consistency with the store tools."""
+    return q.replace("'", "").replace("’", "").replace("‘", "")
+
+
 async def search_winealign(
     query: str,
     max_pages: int = 3,
@@ -298,7 +303,7 @@ async def search_winealign(
     for page in range(1, max_pages + 1):
         resp = await _session._get(
             f"{BASE_URL}/search",
-            params={"q": query, "page": page},
+            params={"q": _clean_query(query), "page": page},
         )
 
         if resp.status_code != 200:

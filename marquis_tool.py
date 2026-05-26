@@ -55,6 +55,12 @@ class MarquisResult(BaseModel):
 
 # ── Core Search ─────────────────────────────────────────────────────
 
+def _clean_query(q: str) -> str:
+    """Strip apostrophes and smart quotes so we don't lose hits like
+    'Stag's Hollow' or 'Quails' Gate' on backends sensitive to them."""
+    return q.replace("'", "").replace("’", "").replace("‘", "")
+
+
 async def search_marquis(
     query: str,
     limit: int = 30,
@@ -81,7 +87,7 @@ async def search_marquis(
         "is_auto_spellcheck": "false",
         "is_auto_spellcheck_zero_result": "true",
         "did_you_mean_limit": 1,
-        "search_term": query,
+        "search_term": _clean_query(query),
         "facets": "",
     }
 

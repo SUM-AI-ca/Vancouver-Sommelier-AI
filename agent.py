@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timezone
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
@@ -16,7 +16,7 @@ from marquis_tool import search_marquis
 from merge import merge_tool_results
 from models import get_llm
 from okanagan_cellars_tool import search_okanagan_cellars
-from prompts import ORCHESTRATOR_SYSTEM_PROMPT, PAIRING_SYSTEM_PROMPT
+from prompts import ORCHESTRATOR_SYSTEM_PROMPT, PAIRING_SYSTEM_PROMPT, SYNTHESIS_SYSTEM_PROMPT
 from robert_parker_tool import search_robert_parker
 from safety import safe_tool
 from state import AgentState, UserPreferences
@@ -132,7 +132,7 @@ async def reasoning_pair_wine_tool(dish: str) -> str:
     Use for non-Western cuisines or complex dishes. Do NOT use for common pairings
     (steak + Cabernet, salmon + Pinot) — answer those from built-in knowledge.
     """
-    llm = get_llm(temperature=0.5)
+    llm = get_llm(temperature=0.3)
     resp = await llm.ainvoke([
         SystemMessage(content=PAIRING_SYSTEM_PROMPT),
         HumanMessage(content=f"What BC wine pairs best with: {dish}"),
@@ -184,7 +184,7 @@ SAFE_TOOLS = [safe_tool(t) for t in TOOLS]
 # ── Graph nodes ──────────────────────────────────────────────────
 
 async def orchestrator_node(state: AgentState) -> dict:
-    llm = get_llm().bind_tools(TOOLS)
+    llm = get_llm(temperature=0.2).bind_tools(TOOLS)
 
     system_parts = [ORCHESTRATOR_SYSTEM_PROMPT]
 
@@ -209,9 +209,33 @@ async def orchestrator_node(state: AgentState) -> dict:
     return {"messages": [response]}
 
 
+MAX_TOOL_ROUNDS = 3  # safety net for prompts.py Rule 12 (≤2 rounds expected, +1 buffer)
+
+
+def _count_tool_rounds_this_turn(messages: list) -> int:
+    """Count AIMessage tool-call rounds since the most recent HumanMessage.
+
+    Each AIMessage with .tool_calls counts as one round (the AIMessage may emit
+    multiple parallel tool_calls, but it is one orchestrator decision)."""
+    rounds = 0
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            break
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            rounds += 1
+    return rounds
+
+
 def should_continue(state: AgentState) -> str:
     last = state["messages"][-1]
     if isinstance(last, AIMessage) and last.tool_calls:
+        # Safety net: if the orchestrator has already issued MAX_TOOL_ROUNDS rounds
+        # of tool calls this turn, stop and force synthesis with whatever data we have.
+        # Without this, malformed queries can drive the agent to recursion_limit (e.g.
+        # SOM-003 hit 30 rounds in run 20260525-225130). The user gets a partial answer
+        # instead of an error.
+        if _count_tool_rounds_this_turn(state["messages"]) >= MAX_TOOL_ROUNDS:
+            return "merge_results"
         return "tools"
     return "merge_results"
 
@@ -270,8 +294,162 @@ def merge_results_node(state: AgentState) -> dict:
     }
 
 
+def _compact_wine_record(rec: dict) -> dict:
+    """Strip a MergedWineRecord down to fields the synthesizer actually uses."""
+    prices = rec.get("prices") or []
+    critics = rec.get("critic_reviews") or []
+    return {
+        "display_name": rec.get("display_name"),
+        "producer": rec.get("producer"),
+        "vintage": rec.get("vintage"),
+        "grape": rec.get("grape"),
+        "is_bc_vqa": rec.get("is_bc_vqa"),
+        "consumer_rating": rec.get("consumer_rating"),
+        "avg_critic_score": rec.get("avg_critic_score"),
+        "best_price": rec.get("best_price"),
+        "prices": prices[:6],
+        "critic_reviews": critics[:4],
+        "tasting_notes_consolidated": rec.get("tasting_notes_consolidated"),
+    }
+
+
+def _extract_text(content) -> str:
+    """Flatten Gemini's list-of-parts content into plain text.
+
+    Gemini 3.5 returns response.content as a list of dicts like
+    [{"type": "text", "text": "...", "extras": {"signature": "..."}}]
+    when thinking/signing is active. Calling str() on that list leaks
+    the Python repr into the user-facing response. This helper picks
+    out only the text fields, in order.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts)
+    return str(content)
+
+
+def _collect_aux_tool_outputs(messages: list) -> list[dict]:
+    """Pick up reasoning_pair_wine and tavily outputs — tools whose value isn't captured
+    in the merged wine_context but is needed by the synthesizer for pairing logic and
+    educational/disambiguation context.
+    """
+    aux: list[dict] = []
+    for msg in messages:
+        if not isinstance(msg, ToolMessage):
+            continue
+        content = msg.content if isinstance(msg.content, str) else ""
+        if not content:
+            continue
+        try:
+            data = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        tool = data.get("tool", "")
+        if tool == "reasoning_pair_wine":
+            rec = data.get("recommendation", "")
+            if rec:
+                aux.append({"tool": "reasoning_pair_wine", "recommendation": rec[:2000]})
+        elif tool == "search_tavily":
+            ans = data.get("answer", "")
+            if ans:
+                aux.append({"tool": "search_tavily", "answer": ans[:1500]})
+    return aux[-4:]
+
+
 async def format_response_node(state: AgentState) -> dict:
-    return {}
+    """Synthesis pass — reformat the orchestrator's wine selection into the markdown skeleton.
+
+    The orchestrator's draft provides the *intent signal* (which wines to feature,
+    which to omit as fuzzy-search noise). The wine_context blob provides the *facts*
+    (prices, stores, URLs, critic scores). Synthesis combines them: it follows the
+    orchestrator's recommendations but pulls all numbers and links from wine_context.
+
+    Replaces the orchestrator's last AIMessage in-place (same id) so streaming and
+    downstream consumers see only the synthesized response. Off-topic turns (no tool
+    results, empty wine_context AND no aux outputs) are passed through untouched
+    to avoid latency cost on queries that don't need the skeleton.
+    """
+    msgs = state["messages"]
+    last_ai: AIMessage | None = None
+    last_ai_any: AIMessage | None = None
+    user_query = ""
+    # Walk backwards within this turn only — stop at the most recent HumanMessage
+    # so multi-turn conversations don't bleed an earlier turn's draft into synthesis.
+    for msg in reversed(msgs):
+        if isinstance(msg, HumanMessage):
+            if not user_query:
+                user_query = msg.content if isinstance(msg.content, str) else str(msg.content)
+            break
+        if isinstance(msg, AIMessage):
+            if last_ai_any is None:
+                last_ai_any = msg
+            if last_ai is None and not msg.tool_calls:
+                last_ai = msg
+
+    # If the orchestrator was short-circuited by MAX_TOOL_ROUNDS, the most recent
+    # AIMessage still has tool_calls and no clean draft. Use it anyway (it has the
+    # orchestrator's intent in any text it managed to produce) and let synthesis
+    # write the final response from data.
+    if last_ai is None:
+        last_ai = last_ai_any
+    if last_ai is None:
+        return {}
+
+    wine_ctx = state.get("wine_context") or {}
+    aux_outputs = _collect_aux_tool_outputs(msgs)
+
+    if not wine_ctx and not aux_outputs:
+        return {}
+
+    last_recs = state.get("last_recommendations") or []
+    ordered_keys: list[str] = []
+    for k in last_recs:
+        if k in wine_ctx and k not in ordered_keys:
+            ordered_keys.append(k)
+    for k in wine_ctx.keys():
+        if k not in ordered_keys:
+            ordered_keys.append(k)
+        if len(ordered_keys) >= 8:
+            break
+    ordered_keys = ordered_keys[:8]
+
+    context_blob = {k: _compact_wine_record(wine_ctx[k]) for k in ordered_keys}
+
+    orchestrator_draft = _extract_text(last_ai.content)
+
+    synthesis_input = (
+        f"## User query\n{user_query}\n\n"
+        f"## Orchestrator's wine selection (FOLLOW this — it knows which wines actually "
+        f"answer the user's question vs. which are fuzzy-search noise)\n"
+        f"{orchestrator_draft}\n\n"
+        f"## Wine data (the FACTS — pull prices, stores, URLs, scores from here. "
+        f"Do NOT introduce wines that are not in the orchestrator's selection above.)\n"
+        f"{json.dumps(context_blob, default=str, ensure_ascii=False)}\n\n"
+        f"## Supplementary tool outputs (pairing logic, web answers — use as context, "
+        f"do NOT copy their formatting)\n"
+        f"{json.dumps(aux_outputs, default=str, ensure_ascii=False)}\n"
+    )
+
+    llm = get_llm(temperature=0.0)
+    response = await llm.ainvoke([
+        SystemMessage(content=SYNTHESIS_SYSTEM_PROMPT),
+        HumanMessage(content=synthesis_input),
+    ])
+
+    content = _extract_text(response.content)
+    final_msg = AIMessage(content=content, id=last_ai.id)
+    return {"messages": [final_msg]}
 
 
 # ── Graph builder ────────────────────────────────────────────────

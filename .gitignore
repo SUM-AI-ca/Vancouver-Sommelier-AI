@@ -30,5 +30,8 @@ Thumbs.db
 # LangGraph checkpoints (runtime state, not code)
 data/checkpoints.db
 
+# Quality eval runs (timestamped result dirs)
+tests/results/
+
 # Claude Code
 .claude/
