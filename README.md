@@ -22,6 +22,21 @@ ReAct loop이 `tools → orchestrator`로 돌아갈 때, 각 라운드의 raw to
 
 구현: [`validation.py`](validation.py) (Pydantic `ValidationResult` + `validate_query()`), [`prompts.py`](prompts.py)의 `VALIDATION_SYSTEM_PROMPT`, [`app.py:154`](app.py) 게이트 삽입.
 
+### Human-in-the-Loop Clarification (신규)
+
+기존엔 쿼리/툴 결과가 모호해도 오케스트레이터가 **암묵적으로** best-match를 잡고 진행했다. 이제 LangGraph의 `interrupt()` primitive를 이용해 오케스트레이터가 **명시적으로** 유저에게 되묻을 수 있다.
+
+흐름: 오케스트레이터가 `ask_user_clarification_tool(question, options?)`을 호출 → tool 내부에서 `interrupt({...})` 발생 → 그래프가 같은 thread의 checkpoint에 멈춤 → `app.py`가 SSE `clarification_request` 이벤트로 question + options를 프론트에 전송 → 프론트가 옵션 chip + hint UI 렌더링 → 유저가 옵션 클릭 or 자유 입력 → 다음 `/api/chat` 호출 진입 시 `aget_state(config)`로 pending interrupt 감지 → `Command(resume=req.message)`로 그래프 재개 → tool은 유저 응답을 string으로 받고 정상 종료 → 다음 orchestrator round 진행.
+
+규칙(`prompts.py` Rule 9):
+- **묻는다**: 2+ 해석 가능한 모호 쿼리("좋은 와인 추천해줘"), 비슷한 점수의 매칭이 다수일 때 (preference로 tie-break), 필수 정보 누락 (페어링인데 음식 없음, "the second one"인데 prior context 없음).
+- **묻지 않는다**: user_preferences로 답이 나오는 경우, "2-3개 와인 추천" 같은 default가 자연스러운 경우, 정보성/교육성 질문.
+- **횟수 제한**: 한 turn에 최대 3회 (`MAX_CLARIFICATIONS_PER_TURN`). cap 도달 시 system prompt에 안내가 append되어 강제로 best-effort 답변.
+- **Round counting**: clarification-only round는 `MAX_TOOL_ROUNDS` 카운트에서 제외 — 데이터 수집 round와 분리.
+- **Validation skip on resume**: clarification 응답("$50 under" 같은 짧은 텍스트)이 validator를 트립하지 않도록 resume 분기에선 validation 게이트를 건너뜀.
+
+구현: [`agent.py`](agent.py)의 `ask_user_clarification_tool` + `_count_clarifications_this_turn`, [`prompts.py`](prompts.py) Rule 9, [`app.py`](app.py)의 interrupt 감지 + `Command(resume=...)` 분기, [`static/app.js`](static/app.js)의 `renderClarification()`, [`static/styles.css`](static/styles.css)의 `.clarification*` 클래스.
+
 ### 최근 UI/UX 개편
 
 - **랜딩 + 풀스크린 채팅 오버레이** — 간단한 capability 설명이 있는 랜딩 페이지에서 "Start chatting" 버튼을 누르면 화면을 가득 채우는 채팅 오버레이가 뜬다.
@@ -50,9 +65,12 @@ Validation Gate (validation.py — Gemini Flash 분류)
     ├─ INVALID → 사용자 언어로 거절 → 그래프 우회 → 종료
     │
     └─ VALID ↓
-LangGraph Agent (agent.py — Gemini 3.5 Flash, 10개 tool)
+LangGraph Agent (agent.py — Gemini 3.5 Flash, 11개 tool)
     │
     │   orchestrator → tools → compact_tool_results → orchestrator (loop)
+    │                     ↓ (ask_user_clarification_tool)
+    │                  interrupt() → SSE clarification_request → 유저 응답
+    │                     ↓ Command(resume=...) → 다음 orchestrator round
     │                                                       ↓ (no tool_calls)
     │   merge_results → format_response → END
     ↓

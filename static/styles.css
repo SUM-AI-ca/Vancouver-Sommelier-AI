@@ -316,6 +316,62 @@ body {
     border-bottom-right-radius: 4px;
 }
 
+/* ── Clarification prompt ───────────────────────── */
+
+.chat-message.ai.clarification {
+    border: 1px dashed var(--primary);
+    background: var(--primary-soft);
+}
+
+.clarification-question {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+
+.clarification-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0.35rem 0 0.4rem;
+}
+
+.clarification-option-btn {
+    appearance: none;
+    border: 1px solid var(--primary);
+    background: var(--background);
+    color: var(--primary);
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease, transform 0.06s ease;
+}
+
+.clarification-option-btn:hover:not(:disabled) {
+    background: var(--primary);
+    color: var(--background);
+}
+
+.clarification-option-btn:active:not(:disabled) {
+    transform: scale(0.97);
+}
+
+.clarification-option-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+}
+
+.clarification-hint {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
 /* ── Tool badges ─────────────────────────────────── */
 
 .tool-badge {

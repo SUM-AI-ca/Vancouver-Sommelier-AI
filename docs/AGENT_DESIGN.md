@@ -575,6 +575,34 @@ orchestrator = create_react_agent(
 )
 ```
 
+### 4.6 Human-in-the-Loop Clarification
+
+When the user's query or the available data is genuinely ambiguous, the orchestrator can pause the graph and ask the user a clarifying question instead of guessing. This is implemented as a tool that triggers a LangGraph `interrupt()` rather than as a dedicated node — the orchestrator decides when to ask, the same way it decides which store to query.
+
+**Mechanism.** `ask_user_clarification_tool(question, options=None)` calls `langgraph.types.interrupt({"type": "clarification_request", "question": ..., "options": [...]})`. The checkpointer freezes the graph state at that point. `app.py` polls `graph.aget_state(config)` after the stream ends; if `snapshot.interrupts` is non-empty, it emits an SSE `clarification_request` event carrying the question and options. The frontend renders option chips + a hint. The user either clicks a chip (which fills the input box and submits) or types free text. On the next `/api/chat` call, `app.py` detects the pending interrupt again and resumes with `Command(resume=req.message)` instead of `{"messages": [...]}` — the tool's `interrupt()` returns the user's reply, the tool finishes normally, and the next orchestrator round proceeds with that reply in scope.
+
+**Why a tool, not a node.** The orchestrator already controls tool selection. Wiring clarification as a node would require a separate routing decision and structured "I want to ask" output. A tool fits the existing ReAct pattern, gives the orchestrator natural fan-out (`ask_user_clarification_tool` can be one of several tool_calls in a round), and lets the prompt's behavioral rules drive when to use it.
+
+**Triggers (`prompts.py` Rule 9).**
+- User request has 2+ plausible interpretations with materially different answers (e.g. "좋은 와인 추천해줘" with no budget/style/occasion hint).
+- Top tool results tie and a user preference would break the tie (e.g. 5 Chardonnays at similar scores from different producers).
+- Essential info is missing (food pairing with no dish; "the second one" with no prior context in `wine_context`).
+
+**Anti-triggers.** Don't ask when a reasonable default exists from `user_preferences` or `wine_context`, when "here are 2-3 picks across styles" is a fine answer, or for informational/educational queries. Don't stall by clarifying instead of answering.
+
+**Round counting.** A round whose `tool_calls` are **all** `ask_user_clarification_tool` is excluded from `_count_tool_rounds_this_turn`, so clarifications don't push the orchestrator toward the `MAX_TOOL_ROUNDS = 3` data-tool safety stop. A separate counter `_count_clarifications_this_turn` enforces `MAX_CLARIFICATIONS_PER_TURN = 3`. When the cap is reached, `orchestrator_node` appends a "clarification cap reached — proceed with best-effort answer" line to the system prompt so the model stops asking and synthesizes a response.
+
+**Validation skip on resume.** Short clarification replies like "$50 under" or "the cheaper one" could trip the off-topic validator. `app.py` detects resume turns via `aget_state(config).interrupts` and skips the validation gate in that branch — the message is already in-context as a clarification reply.
+
+**Frontend treatment.** The `ask_user_clarification_tool` tool badge is intentionally **skipped** by `static/app.js` (no `addToolBadge` on `tool_start`). Because the tool blocks on `interrupt()`, its `tool_end` doesn't fire until the user replies, which would leave the spinner stuck and force the global "done" event to mark it completed prematurely. The dedicated clarification UI is the only visible signal; on resume, the tool's `tool_end` is also ignored so no orphan badge appears.
+
+**Files involved.**
+- `agent.py` — `ask_user_clarification_tool`, `MAX_CLARIFICATIONS_PER_TURN`, `_count_clarifications_this_turn`, round-counter exclusion, system-prompt cap notice.
+- `prompts.py` — Tool Catalog entry + Behavioral Rule 9.
+- `app.py` — interrupt detection on entry → `Command(resume=...)`; post-stream interrupt detection → SSE `clarification_request`; validation skip on resume.
+- `static/app.js` — `clarification_request` handler, `renderClarification()`, badge skip for the clarification tool.
+- `static/styles.css` — `.clarification`, `.clarification-question`, `.clarification-options`, `.clarification-option-btn`, `.clarification-hint`.
+
 ---
 
 ## 5. Model Selection
@@ -1239,9 +1267,10 @@ The frontend listens for these event types:
 
 | Event type | Payload | Frontend behavior |
 |---|---|---|
-| `tool_start` | `{tool, args}` | Show "Searching <friendly-label>…" badge |
-| `tool_end` | `{tool}` | Mark the badge as complete |
+| `tool_start` | `{tool, args}` | Show "Searching <friendly-label>…" badge (skipped for `ask_user_clarification_tool`) |
+| `tool_end` | `{tool}` | Mark the badge as complete (skipped for `ask_user_clarification_tool`) |
 | `token` | `{text}` | Append to the current assistant message bubble |
+| `clarification_request` | `{question, options}` | Render dashed-border bubble with option chips + free-text hint (§4.6) |
 | `done` | none | Re-enable the input field |
 | `error` | `{message}` | Show an error banner |
 
