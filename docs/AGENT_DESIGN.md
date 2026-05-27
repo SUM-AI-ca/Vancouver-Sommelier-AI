@@ -583,7 +583,7 @@ When the user's query or the available data is genuinely ambiguous, the orchestr
 
 **Why a tool, not a node.** The orchestrator already controls tool selection. Wiring clarification as a node would require a separate routing decision and structured "I want to ask" output. A tool fits the existing ReAct pattern, gives the orchestrator natural fan-out (`ask_user_clarification_tool` can be one of several tool_calls in a round), and lets the prompt's behavioral rules drive when to use it.
 
-**Triggers (`prompts.py` Rule 9).**
+**Triggers (`prompts.py` Guideline G6).**
 - User request has 2+ plausible interpretations with materially different answers (e.g. "좋은 와인 추천해줘" with no budget/style/occasion hint).
 - Top tool results tie and a user preference would break the tie (e.g. 5 Chardonnays at similar scores from different producers).
 - Essential info is missing (food pairing with no dish; "the second one" with no prior context in `wine_context`).
@@ -598,7 +598,7 @@ When the user's query or the available data is genuinely ambiguous, the orchestr
 
 **Files involved.**
 - `agent.py` — `ask_user_clarification_tool`, `MAX_CLARIFICATIONS_PER_TURN`, `_count_clarifications_this_turn`, round-counter exclusion, system-prompt cap notice.
-- `prompts.py` — Tool Catalog entry + Behavioral Rule 9.
+- `prompts.py` — Tool Catalog entry + Guideline G6 (Ask before guessing).
 - `app.py` — interrupt detection on entry → `Command(resume=...)`; post-stream interrupt detection → SSE `clarification_request`; validation skip on resume.
 - `static/app.js` — `clarification_request` handler, `renderClarification()`, badge skip for the clarification tool.
 - `static/styles.css` — `.clarification`, `.clarification-question`, `.clarification-options`, `.clarification-option-btn`, `.clarification-hint`.
@@ -690,23 +690,40 @@ The other six follow the same template. Each tool's description **must** include
 
 ### 6.4 Behavioral Rules
 
-The orchestrator's system prompt encodes 15 rules. The first 10 are the original behavior; rules 11–15 were added across quality-eval iterations (see §16.5) to fix specific failure modes (tool storms, fabricated retailers, Tavily abuse, link omission).
+The orchestrator's system prompt is split into two tiers — **Hard Constraints** (must-not-violate) and **Guidelines** (apply where they fit). This reorganization (May 2026) consolidates the prior 15-rule flat list to reduce LLM rule-conflict and surface the load-bearing rules first.
 
-1. **Parallelize inventory checks.** When the user asks "where can I buy X" or wants pricing, emit `tool_calls` for `search_bcliquor_tool`, `search_marquis_tool`, `search_okanagan_cellars_tool`, and `search_everything_wine_tool` in a single response.
-2. **Never invent.** If no tool returned a score, vintage, or price, do not state one.
-3. **Attribute critics by name.** Quote the critic and source when citing a review.
-4. **Cite stores by name** when reporting prices and inventory.
-5. **Prefer in-stock results** when ranking recommendations.
-6. **Use Tavily sparingly.** It is paid. Only call it for non-Western pairing questions, regional/educational queries, or to disambiguate a wine name when all store tools return empty.
-7. **Use `reasoning_pair_wine_tool` for non-trivial pairings.** Common pairings (steak + Cabernet, salmon + Pinot) — answer from built-in knowledge. Non-trivial — invoke the sub-LLM.
-8. **Respect the multi-turn state.** Before recommending a wine, scan `wine_context` — if the user already saw it last turn, reference it as such ("the Tantalus Riesling I mentioned earlier").
-9. **Resolve references.** "The second one" / "the cheaper one" / "tell me more" → resolve against `last_recommendations` and `wine_context`.
-10. **Calibrate depth to audience.** A beginner question gets a friendly, jargon-light answer; a sommelier question gets the full critic detail. Read the user's vocabulary as a cue.
-11. **Always include links.** Wrap each cited store / critic review in a markdown link using the URL from the tool result.
-12. **Hard cap on tool calls per turn.** At most 2 rounds: round 1 is a parallel fan-out; round 2 is an optional targeted follow-up. Total ≤ 8 calls. Backed by `MAX_TOOL_ROUNDS` in `agent.py` (§4.2) — exceeding the prompt cap still triggers the code-level short-circuit.
-13. **Off-topic queries: respond directly, no tools.** Weather / sports / jokes get a 1–2 sentence answer + gentle redirect to wine. Calling Tavily for these is forbidden.
-14. **Tavily is FORBIDDEN for "where can I buy / pricing / inventory" questions.** Tavily routinely fabricates retailer URLs (Legacy Liquor, ZYN.ca, BSW Liquor) that then propagate into the response. When store tools come back empty, tell the user so — do not paper over with web search.
-15. **Never invent retailers.** Only mention stores that appear in tool results: BC Liquor, Marquis Wine Cellars, Everything Wine, Okanagan Cellars. No out-of-province retailers unless they appear verbatim in a tool response.
+A leading **Response Language** directive precedes both tiers: respond in the user's language (Korean question → Korean draft; English → English). Wine/producer/varietal names stay in Latin script; body prose follows the user.
+
+#### Hard Constraints
+
+| ID | Rule | Code-level backstop |
+|---|---|---|
+| **C1** | **Never invent** producers, vintages, scores, prices, retailers, or URLs. If a tool didn't return it, you don't have it — say so plainly. No recall from training. | Synthesizer's "cite only facts in wine_data" rule + merge.py dedupes by tool source |
+| **C2** | **Tavily is forbidden for inventory/pricing.** Use it ONLY for non-Western cuisine pairings, educational/regional questions, or disambiguation when ALL store tools come back empty. Tavily fabricates retailer URLs (Legacy Liquor, ZYN.ca, BSW Liquor have all leaked through historically). | None — prompt-only |
+| **C3** | **Tool budget per user turn.** Data tools (store + critic searches): ≤2 rounds total, ≤8 calls total. Clarification calls: ≤3 per turn, tracked separately, do NOT count against the data-tool budget. | `MAX_TOOL_ROUNDS = 3` in `agent.py:should_continue`, `MAX_CLARIFICATIONS_PER_TURN = 3` in `agent.py:orchestrator_node` — both force synthesis if exceeded |
+
+#### Guidelines
+
+| ID | Rule |
+|---|---|
+| **G1** | **Parallelize.** Inventory/pricing queries → fan out store tools (bcliquor + marquis + okanagan + everythingwine) in one round. Critic queries → fan out critic tools. Serial calls cost the user latency. |
+| **G2** | **Attribute and link.** Critics by name + source; stores by name. Markdown link with the tool-returned URL whenever present — the synthesizer needs these for the Where-to-buy table. |
+| **G3** | **Multi-turn state.** Resolve "the second one" / "the cheaper one" / "tell me more" against `last_recommendations` and `wine_context`. Don't re-recommend a wine the user already saw without acknowledging it. |
+| **G4** | **Calibrate depth to audience.** Beginner vocabulary → friendly, jargon-light. Sommelier vocabulary → full critic detail. |
+| **G5** | **Off-topic queries** (weather, sports, jokes): 1–2 sentence answer from built-in knowledge, redirect to wine, no tools. Backstop when the pre-agent validation gate (§12.6) fail-opens. |
+| **G6** | **Ask before guessing.** Call `ask_user_clarification_tool` when the query has 2+ plausible interpretations, top results tie and a user preference would break it, or essential info (dish, prior context) is missing. Do NOT ask when `user_preferences` already answers it, when "2–3 picks across styles" is fine, or to stall instead of committing. See §4.6 for full mechanism; cap is in C3. |
+
+**What was removed (vs. the prior 15-rule list):**
+- Duplicate "Never invent" entries (Rule 2 + Rule 15) → collapsed into C1.
+- Two separate Tavily rules (Rule 6 + Rule 14) → collapsed into C2.
+- "Prefer in-stock results" (Rule 5) → folded into the synthesizer's ranking logic; not orchestrator-level.
+- "Use reasoning_pair_wine_tool for non-trivial pairings" (Rule 7) → moved into the tool's own docstring (§3.x), where the orchestrator actually reads it.
+- Reference-resolution rule (Rule 9) → merged with multi-turn state (G3).
+
+**Why this reorganization helps:**
+- The pre-refactor prompt mixed "must never violate" rules (invent, Tavily abuse) with style guidelines (calibrate audience) at the same priority. The new split tells the model which rules cannot bend.
+- Tool-budget rules were scattered across Rule 12, Rule 6 (Tavily limits), and the new clarification cap. C3 puts the full budget in one place, with code-level backstops noted inline.
+- Wine names staying in Latin script is now explicit — earlier the model would sometimes translate "Pinot Noir" → "피노 누아" in Korean responses, which broke search and link matching downstream.
 
 ### 6.5 Output Contract
 
@@ -742,6 +759,8 @@ The synthesizer follows these structural rules:
 - **Critic scores require an exact bottling match.** A review of "Painted Rock Syrah Cabernet Sauvignon 2021" does not back a claim about "Painted Rock Syrah 2021" — they are different wines. Say "no critic reviews available for this specific bottling" rather than borrow scores from the adjacent bottling.
 
 The frontend renders this markdown into HTML before showing it to the user (see §13).
+
+**Language behavior.** The synthesis prompt carries a `## Response Language` directive (added alongside the §6.4 refactor): write all body prose, section headers ("Why this wine" / "Where to buy" / "Pairing note"), and column labels in the user's query language. Wine names, producer names, varietals, and region names stay in their original Latin script so retrieval keys, URLs, and the orchestrator's intent signal remain stable. This explicit rule was added because Gemini would occasionally translate "Pinot Noir" → "피노 누아" or "Naramata Bench" → "나라마타 벤치" for Korean queries, which broke fuzzy matching against tool results downstream.
 
 ---
 
@@ -1346,7 +1365,7 @@ if verdict is not None and not verdict.is_valid:
 
 **Output language:** the same call also generates the rejection message in the **same language as the user's input**, with explicit Korean / English / coding-question examples in the prompt. There is no separate language-detection step.
 
-**Fail-open behavior:** if the validator LLM raises (timeout, quota, transient Vertex AI error), the handler proceeds to the graph as if validation never ran. Behavioral Rule 13 in `ORCHESTRATOR_SYSTEM_PROMPT` (§6.4) remains a defense-in-depth backstop for off-topic queries that slip through.
+**Fail-open behavior:** if the validator LLM raises (timeout, quota, transient Vertex AI error), the handler proceeds to the graph as if validation never ran. Guideline G5 (off-topic redirect) in `ORCHESTRATOR_SYSTEM_PROMPT` (§6.4) remains a defense-in-depth backstop for off-topic queries that slip through.
 
 **Observed latency:**
 
