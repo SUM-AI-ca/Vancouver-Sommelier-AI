@@ -1,0 +1,1935 @@
+================================================================================
+  GEMINI MODEL COMPARISON -- BC Wine AI Agent
+  Models: gemini-3.5-flash, gemini-3.1-pro-preview, gemini-3.1-flash-lite, gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite
+  Started: 2026-05-24 05:06:05
+  Total API calls: 7 models x 10 queries = 70
+================================================================================
+
+================================================================================
+  TEST: ORCHESTRATOR
+================================================================================
+
+--- Query 1: What's the best wine to pair with grilled salmon? ---
+
+  [gemini-3.5-flash]  time=2.53s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["grilled salmon"],
+      "reasoning": "The user is asking for a wine recommendation to pair with a specific food (grilled salmon), which maps directly to the wine_pairing tool."
+    }
+
+  [gemini-3.1-pro-preview]  time=4.94s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["grilled salmon"],
+      "reasoning": "The user is asking for a wine recommendation to pair with a specific food, which requires the wine_pairing tool."
+    }
+
+  [gemini-3.1-flash-lite]  time=1.54s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["best wine pairing for grilled salmon"],
+      "reasoning": "The user is asking for a food pairing recommendation, which is directly addressed by the wine_pairing tool."
+    }
+
+  [gemini-3-flash-preview]  time=4.19s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["grilled salmon"],
+      "reasoning": "The user is asking for a food and wine pairing recommendation for grilled salmon."
+    }
+
+  [gemini-2.5-pro]  time=5.01s  in=0 out=0
+  ----------------------------------------------------------------------
+    ```json
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["grilled salmon"],
+      "reasoning": "User is asking for a wine recommendation for a specific food, which is a pairing request."
+    }
+    ```
+
+  [gemini-2.5-flash]  time=3.85s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["grilled salmon"],
+      "reasoning": "The user is asking for a wine pairing recommendation for a specific food item. The `wine_pairing` tool is appropriate for this request."
+    }
+
+  [gemini-2.5-flash-lite]  time=1.24s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["grilled salmon wine pairing"],
+      "reasoning": "The user is asking for a wine pairing recommendation for a specific dish."
+    }
+
+
+--- Query 2: Where can I buy Tantalus Riesling in Vancouver and how much does it cost? ---
+
+  [gemini-3.5-flash]  time=3.40s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "inventory",
+      "tools_to_call": ["search_bcliquor", "search_stores"],
+      "search_queries": ["Tantalus Riesling"],
+      "reasoning": "The user is looking for retail availability and pricing for Tantalus Riesling in Vancouver, which requires searching both BC Liquor Stores and local private wine shops."
+    }
+
+  [gemini-3.1-pro-preview]  time=7.30s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "inventory",
+      "tools_to_call": [
+        "search_bcliquor",
+        "search_stores"
+      ],
+      "search_queries": [
+        "Tantalus Riesling"
+      ],
+      "reasoning": "The user is looking for availability and pricing of Tantalus Riesling in Vancouver, which requires checking both BC Liquor stores and private Vancouver wine shops."
+    }
+
+  [gemini-3.1-flash-lite]  time=1.40s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "inventory",
+      "tools_to_call": ["search_bcliquor", "search_stores"],
+      "search_queries": ["Tantalus Riesling", "Tantalus Riesling Vancouver"],
+      "reasoning": "The user is looking for both availability and pricing for a specific wine in Vancouver, requiring searches across both government and private retail channels."
+    }
+
+  [gemini-3-flash-preview]  time=3.28s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "inventory",
+      "tools_to_call": ["search_bcliquor", "search_stores"],
+      "search_queries": ["Tantalus Riesling"],
+      "reasoning": "User is looking for availability and pricing for a specific wine in Vancouver across multiple retailers."
+    }
+
+  [gemini-2.5-pro]  time=8.38s  in=0 out=0
+  ----------------------------------------------------------------------
+    ```json
+    {
+      "intent": "complex",
+      "tools_to_call": ["search_bcliquor", "search_stores"],
+      "search_queries": ["Tantalus Riesling", "Tantalus Riesling"],
+      "reasoning": "User is asking for price and availability of a specific wine in Vancouver. I will search both BC Liquor and private Vancouver wine shops to find where it is sold and for how much."
+    }
+    ```
+
+  [gemini-2.5-flash]  time=2.76s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "inventory",
+      "tools_to_call": ["search_bcliquor", "search_stores"],
+      "search_queries": ["Tantalus Riesling"],
+      "reasoning": "The user is asking for availability and pricing of a specific wine in Vancouver, which requires checking both BC Liquor Stores and private wine shops."
+    }
+
+  [gemini-2.5-flash-lite]  time=1.33s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "complex",
+      "tools_to_call": ["search_bcliquor", "search_stores"],
+      "search_queries": ["Tantalus Riesling", "Tantalus Riesling"],
+      "reasoning": "The user is asking for both availability and price information, which requires checking both BC Liquor Stores and other local wine shops."
+    }
+
+
+--- Query 3: Find me a BC Pinot Noir under $50 that scores above 90 points and is currently in stock ---
+
+  [gemini-3.5-flash]  time=6.96s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "complex",
+      "tools_to_call": ["search_reviews", "search_bcliquor", "search_stores"],
+      "search_queries": ["BC Pinot Noir", "Okanagan Pinot Noir"],
+      "reasoning": "The user is looking for a BC Pinot Noir with specific score (>90) and price (<$50) constraints, and it must be in stock. This requires searching reviews for scores, and BC Liquor and local stores for pricing and inventory."
+    }
+
+  [gemini-3.1-pro-preview]  time=7.46s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "complex",
+      "tools_to_call": [
+        "search_reviews",
+        "search_bcliquor",
+        "search_stores"
+      ],
+      "search_queries": [
+        "BC Pinot Noir"
+      ],
+      "reasoning": "The user is looking for a specific wine type with constraints on score, price, and availability. This requires searching expert reviews for scores above 90, and checking both BC Liquor and private stores for pricing under $50 and current stock."
+    }
+
+  [gemini-3.1-flash-lite]  time=2.60s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "complex",
+      "tools_to_call": ["search_reviews", "search_bcliquor"],
+      "search_queries": ["BC Pinot Noir under $50", "BC Pinot Noir 90+ points"],
+      "reasoning": "I need to cross-reference expert reviews for high-scoring wines with current pricing and availability from the BC Liquor Store to meet all user criteria."
+    }
+
+  [gemini-3-flash-preview]  time=3.24s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "complex",
+      "tools_to_call": ["search_reviews", "search_bcliquor", "search_stores"],
+      "search_queries": ["BC Pinot Noir 90+ points reviews", "BC Pinot Noir under $50 price and stock"],
+      "reasoning": "The request involves filtering by quality (reviews), price (BCL/private stores), and availability (inventory), requiring a multi-tool approach."
+    }
+
+  [gemini-2.5-pro]  time=8.08s  in=0 out=0
+  ----------------------------------------------------------------------
+    ```json
+    {
+      "intent": "complex",
+      "tools_to_call": [
+        "search_reviews",
+        "search_bcliquor",
+        "search_stores"
+      ],
+      "search_queries": [
+        "BC Pinot Noir"
+      ],
+      "reasoning": "The user has multiple constraints (wine type, price, score, availability) requiring a search for reviews to find high-scoring wines, and then a search across all stores for price and inventory."
+    }
+    ```
+
+  [gemini-2.5-flash]  time=3.90s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "complex",
+      "tools_to_call": ["search_reviews", "search_bcliquor", "search_stores"],
+      "search_queries": ["BC Pinot Noir", "BC Pinot Noir", "BC Pinot Noir"],
+      "reasoning": "The user is looking for a BC Pinot Noir that meets specific criteria: a critic score above 90 points, a price under $50, and current availability. This requires checking critic reviews for scores, BC Liquor Stores for general pricing and availability, and specific Vancouver wine shops for current inventory."
+    }
+
+  [gemini-2.5-flash-lite]  time=1.58s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "complex",
+      "tools_to_call": ["search_reviews", "search_bcliquor", "search_stores"],
+      "search_queries": ["BC Pinot Noir >90 points", "BC Pinot Noir <$50", "BC Pinot Noir in stock"],
+      "reasoning": "This query requires searching for reviews, prices, and availability across multiple sources, indicating a complex intent."
+    }
+
+
+--- Query 4: What do critics think about Painted Rock Syrah 2021? ---
+
+  [gemini-3.5-flash]  time=2.51s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "review",
+      "tools_to_call": ["search_reviews"],
+      "search_queries": ["Painted Rock Syrah 2021"],
+      "reasoning": "The user is asking for critic opinions on a specific wine, which requires searching expert reviews."
+    }
+
+  [gemini-3.1-pro-preview]  time=6.90s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "review",
+      "tools_to_call": ["search_reviews"],
+      "search_queries": ["Painted Rock Syrah 2021"],
+      "reasoning": "The user is asking for critic opinions and reviews for a specific wine, which requires searching the expert review databases."
+    }
+
+  [gemini-3.1-flash-lite]  time=1.67s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "review",
+      "tools_to_call": ["search_reviews"],
+      "search_queries": ["Painted Rock Syrah 2021 reviews scores"],
+      "reasoning": "The user is explicitly asking for expert critic opinions and ratings for a specific vintage of a BC wine."
+    }
+
+  [gemini-3-flash-preview]  time=6.00s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "review",
+      "tools_to_call": ["search_reviews"],
+      "search_queries": ["Painted Rock Syrah 2021"],
+      "reasoning": "The user is asking for expert critic reviews and scores for a specific wine."
+    }
+
+  [gemini-2.5-pro]  time=5.65s  in=0 out=0
+  ----------------------------------------------------------------------
+    ```json
+    {
+      "intent": "review",
+      "tools_to_call": ["search_reviews"],
+      "search_queries": ["Painted Rock Syrah 2021"],
+      "reasoning": "The user is asking for critic opinions on a specific wine. The search_reviews tool is designed to find critic reviews and scores."
+    }
+    ```
+
+  [gemini-2.5-flash]  time=1.53s  in=0 out=0
+  ----------------------------------------------------------------------
+    ```json
+    {
+      "intent": "review",
+      "tools_to_call": ["search_reviews"],
+      "search_queries": ["Painted Rock Syrah 2021"],
+      "reasoning": "The user is asking for critic opinions on a specific wine, which directly maps to the 'search_reviews' tool."
+    }
+    ```
+
+  [gemini-2.5-flash-lite]  time=2.08s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "review",
+      "tools_to_call": ["search_reviews"],
+      "search_queries": ["Painted Rock Syrah 2021 reviews"],
+      "reasoning": "The user is asking for critic opinions on a specific wine, which maps directly to the search_reviews tool."
+    }
+
+
+================================================================================
+  TEST: REASONING (Wine Pairing)
+================================================================================
+
+--- Query 1: I'm making pan-seared halibut with lemon butter sauce and roasted asparagus. What BC wine would you ... ---
+
+  [gemini-3.5-flash]  time=9.81s  in=0 out=0
+  ----------------------------------------------------------------------
+    For this elegant dish, I highly recommend a **Sauvignon Blanc** (ideally blended with a touch of Sémillon) from the **Similkameen Valley** or the **Naramata Bench**. 
+    
+    **Why the pairing works:**
+    Halibut is delicate, but the lemon butter sauce adds richness, while asparagus is notoriously difficult to pair due to its green, sulfurous compounds. A BC Sauvignon Blanc is the perfect bridge. Its vibrant, citrusy acidity cuts right through the rich butter, cleansing your palate. Meanwhile, the wine’s natural herbaceous notes (think fresh-cut grass and gooseberry) harmonize beautifully with the roasted asparagus, preventing any metallic clash. 
+    
+    **The Specific Style & Sub-Regions:**
+    Look for a style with a touch of oak aging or Sémillon blended in. This adds a textured, creamy mouthfeel that matches the weight of the butter sauce without losing the zip of the acidity. 
+    *   **Similkameen Valley:** The wind-swept, stony soils impart a distinct flinty minerality and intense herbaceous character.
+    *   **Naramata Bench:** Offers brighter, sun-ripened citrus notes balanced by crisp, cool-climate acidity.
+    
+    **Top BC Winery Recommendations:**
+    1.  **Clos du Soleil "Capella" (Similkameen Valley):** A classic Bordeaux-style Sauvignon Blanc/Sémillon blend. Partially barrel-fermented, it has the perfect textural weight for the butter and a stony, herbal complexity for the asparagus. (~$30)
+    2.  **Blue Mountain Vineyard and Cellars Sauvignon Blanc (Okanagan Falls):** Fresh, mineral-driven, and fermented in stainless steel and neutral oak. It acts like an extra squeeze of fresh lemon on the fish. (~$26)
+    3.  **Phantom Creek Est. "Sémillon/Sauvignon Blanc" (Black Sage Bench):** A richer, rounder option with beautiful lemon curd and waxy notes that elevate the halibut's texture. (~$35)
+
+  [gemini-3.1-pro-preview]  time=13.73s  in=0 out=0
+  ----------------------------------------------------------------------
+    For pan-seared halibut with lemon butter and roasted asparagus, I highly recommend a **BC White Bordeaux-style blend (Sauvignon Blanc and Sémillon)**, specifically from the Similkameen Valley or the Naramata Bench.
+    
+    **Why this pairing works:**
+    Halibut is a meaty, firm fish that requires a white wine with some textural weight, which the Sémillon provides. The lemon butter sauce demands high acidity to cut through the richness, while the citrus notes in the wine create a perfect flavor bridge to the lemon. Finally, roasted asparagus is notoriously difficult to pair due to its green, herbaceous compounds. Sauvignon Blanc is one of the few grapes that shares these herbal characteristics, complementing the vegetable rather than clashing with it. 
+    
+    **Specific Recommendations:**
+    Look for a wine with vibrant acidity and a slightly rounded mouthfeel from brief oak aging or lees contact. 
+    
+    *   **Clos du Soleil "Capella" (Similkameen Valley):** This winery specializes in Bordeaux varietals. The stony minerality of the Similkameen terroir shines here, offering crisp grapefruit and herbal notes that will sing alongside the asparagus and lemon butter.
+    *   **Laughing Stock Vineyards "Blind Trust White" (Naramata Bench):** A beautifully textured Sauvignon Blanc/Sémillon blend. It has enough weight to stand up to the pan-seared crust of the halibut while maintaining a zippy, palate-cleansing finish.
+    *   **Le Vieux Pin Sauvignon Blanc (Oliver):** Though often 100% Sauvignon Blanc, they use large French oak puncheons to give the wine a sophisticated, creamy texture that perfectly mirrors your butter sauce, while retaining the necessary crispness.
+    
+    These premium wines typically range from $28 to $35 and will elevate the rich, fresh flavors of your dish beautifully.
+
+  [gemini-3.1-flash-lite]  time=3.66s  in=0 out=0
+  ----------------------------------------------------------------------
+    For a dish as elegant as pan-seared halibut with lemon butter, you need a wine with high acidity to cut through the richness of the butter, yet enough body to stand up to the firm, flaky fish.
+    
+    My top recommendation is a **Chardonnay from the Okanagan Falls or Naramata Bench sub-regions.**
+    
+    **Why it works:**
+    *   **Flavor Bridge:** A lightly oaked Chardonnay mirrors the buttery sauce, while its natural citrus notes highlight the lemon.
+    *   **Texture:** The creamy mouthfeel of a BC Chardonnay complements the delicate, meaty texture of the halibut.
+    *   **Contrast:** The vibrant acidity found in Okanagan fruit acts as a palate cleanser against the earthy, slightly bitter notes of the roasted asparagus.
+    
+    **Specific Recommendations:**
+    1.  **Meyer Family Vineyards (Okanagan Falls):** Their "Micro Cuvée" or estate Chardonnays offer incredible tension, minerality, and a refined oak profile that won't overpower the fish.
+    2.  **Blue Mountain Vineyard and Cellars (Okanagan Falls):** Known for their classic, Burgundian-style Chardonnay. It has the structure and acidity to elevate the lemon butter sauce perfectly.
+    3.  **Roche Wines (Naramata Bench):** Their "Tradition" Chardonnay is beautifully balanced, offering a bright, focused acidity with a subtle, elegant finish.
+    
+    **Sommelier Tip:** If you prefer something with more zest, look for a **Sauvignon Blanc from the Similkameen Valley.** The rocky, arid terroir there produces wines with intense, flinty minerality and sharp citrus notes that make the asparagus pop. 
+    
+    *Price range: Expect to spend $28–$45 for these premium BC bottles.*
+
+  [gemini-3-flash-preview]  time=7.93s  in=0 out=0
+  ----------------------------------------------------------------------
+    For pan-seared halibut with lemon butter, you need a wine that balances vibrant acidity with enough weight to match the "meaty" texture of the fish and the richness of the sauce.
+    
+    I recommend a **Chardonnay from the Okanagan Falls sub-region**.
+    
+    ### Why it works:
+    1.  **Flavor Bridge:** The citrus notes in a cool-climate Chardonnay mirror the lemon in your sauce.
+    2.  **Texture:** Halibut is a firm fish; a Chardonnay with light oak or lees aging provides a creamy mouthfeel that stands up to the butter without overpowering the delicate flakes.
+    3.  **The Asparagus Factor:** Asparagus can be tricky as it often makes wines taste metallic. However, the bright, mineral-driven acidity of Okanagan Falls fruit cuts through the vegetal bitterness of the roasted spears perfectly.
+    
+    ### Specific BC Recommendations:
+    *   **Meyer Family Vineyards (Okanagan Falls):** Their *McLean Creek Road Chardonnay* is the gold standard for this pairing. It offers elegant acidity and a subtle toasted note that complements the pan-sear on the fish.
+    *   **Blue Mountain Vineyard and Cellars (Okanagan Falls):** Their *All-Beit Chardonnay* is crisp and focused, providing a clean, mineral finish that refreshes the palate after the rich butter sauce.
+    *   **Tantalus Vineyards (Kelowna):** If you prefer a leaner style, their *Chardonnay* offers high-toned acidity and flinty notes that excel with seafood and lemon.
+    
+    **Pro Tip:** If you want to lean into the herbaceous notes of the asparagus, look for a **Sauvignon Blanc/Semillon blend** from the **Similkameen Valley** (like **Corcelettes Estate Winery**). The valley’s signature flinty minerality is a spectacular match for roasted green vegetables.
+
+  [gemini-2.5-pro]  time=18.36s  in=0 out=0
+  ----------------------------------------------------------------------
+    An excellent choice for a classic BC meal! For pan-seared halibut with lemon butter sauce, you need a wine with high acidity to match the lemon and cut through the richness of the butter. The roasted asparagus is a key consideration, as it can make wine taste metallic.
+    
+    My top recommendation is a crisp, vibrant **Sauvignon Blanc from the Okanagan Valley**.
+    
+    **Why it works:** The wine's zesty acidity is a perfect match for the lemon, cleansing your palate from the butter's richness. Crucially, BC Sauvignon Blanc often has subtle herbaceous or grassy notes (pyrazines) that create a beautiful flavour bridge to the asparagus, preventing any off-flavours. The wine's bright citrus and green apple notes will complement the delicate halibut without overpowering it.
+    
+    **Look for these specific wineries:**
+    
+    1.  **Blue Mountain Vineyard & Cellars (Okanagan Falls):** A benchmark for BC Sauvignon Blanc. Consistently elegant, crisp, and complex.
+    2.  **Mission Hill Family Estate (West Kelowna):** Their Reserve Sauvignon Blanc is widely available and offers a classic expression with notes of grapefruit, lime, and a hint of fresh-cut grass.
+    3.  **Le Vieux Pin (Oliver):** Their "Petit Blanc" is a sophisticated, Sancerre-inspired blend often led by Sauvignon Blanc, offering incredible minerality and precision.
+    
+    These wines will elevate your beautiful halibut dish into a truly memorable BC dining experience. Cheers
+
+  [gemini-2.5-flash]  time=10.26s  in=0 out=0
+  ----------------------------------------------------------------------
+    For your pan-seared halibut with lemon butter sauce and roasted asparagus, I'd highly recommend a crisp, aromatic **BC Pinot Gris** or a dry **Riesling**.
+    
+    **Why it works:**
+    The vibrant acidity of these wines is crucial. It will beautifully cut through the richness of the lemon butter sauce, cleansing your palate and enhancing the delicate flavor of the halibut. The citrus and often mineral notes in these varietals will echo the lemon, creating a harmonious bridge, while their medium body won't overpower the fish. For the asparagus, a wine with good acidity and a hint of green apple or herbaceousness (common in these styles) will complement rather than clash.
+    
+    **Specific BC Grape Varietals & Sub-regions:**
+    Look for a **Pinot Gris** from cooler sites within the **Okanagan Valley**, such as **Okanagan Falls** or the **Naramata Bench**. These regions produce wines with excellent acidity and a lovely balance of fruit (pear, green apple) and minerality.
+    Alternatively, a dry **Riesling**, particularly from the **Lake Country** or **Kelowna** areas of the Okanagan, would be superb, offering bright acidity, lemon-lime notes, and often a steely minerality.
+    
+    **Specific BC Wineries:**
+    For a superb Pinot Gris, consider:
+    1.  **Blue Mountain Vineyard and Cellars** (Okanagan Falls) – known for their elegant, mineral-driven style.
+    2.  **Quails' Gate Estate Winery** (West Kelowna) – consistently produces a well-balanced, aromatic Pinot Gris.
+    If you lean towards Riesling, **Tantalus Vineyards** (Kelowna) crafts exceptional dry Rieslings that would be a fantastic match.
+    
+    These options will elevate your dish beautifully without breaking the bank, typically falling in the $20-$30 range.
+
+  [gemini-2.5-flash-lite]  time=2.23s  in=0 out=0
+  ----------------------------------------------------------------------
+    For your pan-seared halibut with lemon butter sauce and roasted asparagus, I recommend a **BC Viognier**.
+    
+    **Why it works:** The luscious, aromatic profile of Viognier is a fantastic match for the richness of the butter sauce. Its notes of apricot, peach, and sometimes a hint of floral perfume will beautifully complement the sweetness of the halibut. Crucially, Viognier often possesses a pleasing weight and texture that can stand up to the pan-seared fish without overpowering it. The subtle spice notes that can be found in some Viogniers will also echo the roasted asparagus.
+    
+    **Specifics:** Look for a Viognier from the **Okanagan Valley**, particularly from sub-regions like **Naramata Bench** or **Oliver**. These areas tend to produce Viogniers with good ripeness and complexity.
+    
+    **Wineries to consider:**
+    *   **Quails' Gate Winery** (West Kelowna) - Known for their elegant and aromatic Viognier.
+    *   **Nk'Mip Cellars** (Osoyoos) - Often produces a fruit-forward and well-balanced Viognier.
+    *   **Burrowing Owl Estate Winery** (Oliver) - Their Viognier typically offers a good balance of fruit and texture.
+    
+    This pairing offers a delightful synergy, with the wine's fruit and texture harmonizing with the dish's richness and delicate flavors.
+
+
+--- Query 2: We're having a BBQ with smoked brisket, coleslaw, and cornbread. What BC wines work here? Budget is ... ---
+
+  [gemini-3.5-flash]  time=8.25s  in=0 out=0
+  ----------------------------------------------------------------------
+    For a classic BBQ brisket feast, you need a wine with bold structure, rich fruit, and savory complexity to stand up to the smoke, fat, and sweet-savory sides. 
+    
+    **The Perfect Match: South Okanagan Syrah**
+    
+    **Why it works:** Syrah is the ultimate brisket companion. The grape’s natural high acidity cuts through the rich fat of the brisket and the creaminess of the coleslaw. Its bold tannins bind with the meat's proteins, softening the wine on your palate. Crucially, BC Syrah is famous for its cracked black pepper, dark fruit, and savory characteristics, which act as a direct flavor bridge to the brisket’s charred bark. 
+    
+    **Sub-Region to Target:** Look to the **Osoyoos Lake District** or the **Black Sage Bench** in the southern Okanagan Valley. This is BC’s pocket desert; the intense daytime heat ripens the grapes to deliver lush blackberry and plum flavors (perfect for balancing sweet cornbread), while cool desert nights preserve the vital acidity.
+    
+    **Specific Winery Recommendations ($30–$50 range):**
+    
+    1. **Le Vieux Pin 'Cuvée Violette' Syrah (Oliver/Osoyoos) – ~$38**  
+       An incredibly elegant, Northern Rhône-style Syrah. It is packed with fresh black pepper, violet aromatics, and bright dark cherry that lifts the heavy smoke of the brisket.
+    2. **Painted Rock Estate Winery Syrah (Skaha Bench) – ~$45**  
+       A more muscular, full-bodied expression. It offers intense blackberry, cocoa, and savory spice with structured tannins that can handle the richest cuts of meat.
+    3. **Black Hills Estate Winery Syrah (Black Sage Bench) – ~$45**  
+       Plush and velvety, this wine features ripe dark fruit and a distinct smoky, herbal finish that beautifully mirrors the wood smoke of your BBQ.
+
+  [gemini-3.1-pro-preview]  time=19.52s  in=0 out=0
+  ----------------------------------------------------------------------
+    For smoked brisket, you need a wine with enough tannin to cut through the rich, melting fat, and a flavor profile that complements deep, wood-smoked bark. The ultimate pairing here is a **warm-climate BC Syrah**. 
+    
+    **Why it works:** 
+    BC Syrah naturally exhibits savory, black pepper, and smoked meat characteristics (flavor bridges) that harmonize perfectly with smoked brisket. The wine’s dark berry fruit provides a beautiful contrast to the tangy coleslaw, while its plush texture and ripe fruit weight easily handle the subtle sweetness of the cornbread. Finally, the wine's natural acidity and structured tannins act as a palate cleanser against the rich beef fat.
+    
+    **The Region & Varietal:**
+    Look for Syrah from the sun-drenched **South Okanagan** (specifically the Black Sage Bench or Osoyoos) or the rugged **Similkameen Valley**. These regions provide the heat necessary to ripen Syrah, yielding bold, structured wines with that signature BC savory, wild-sage edge.
+    
+    **Specific Winery Recommendations ($30-$50):**
+    *   **Moon Curser Vineyards (Osoyoos):** Their Syrah (approx. $35) is a powerhouse of dark cherry, black pepper, and subtle smoke—a tailor-made BBQ wine.
+    *   **Le Vieux Pin (Oliver):** Look for their *Cuvée Violette* Syrah (approx. $40). It offers a slightly more elegant, Northern Rhône style with cracked pepper and floral notes that elevate the savory brisket without overpowering it.
+    *   **Orofino (Similkameen Valley):** Their Syrahs (approx. $35) showcase the intense minerality and wild sagebrush character of the Similkameen, cutting through the rich meal beautifully. 
+    
+    *Tip:* Pop these in the fridge for 20 minutes before serving. A slight chill (around 16°C) keeps the alcohol in check and lets the smoky, peppery flavors shine alongside your BBQ!
+
+  [gemini-3.1-flash-lite]  time=3.73s  in=0 out=0
+  ----------------------------------------------------------------------
+    For a smoky, rich brisket paired with the tangy crunch of coleslaw and sweet cornbread, you need a wine with enough structure to stand up to the beef, but enough acidity to cut through the fat and slaw.
+    
+    ### 1. The "Classic" Choice: Syrah from the Okanagan Falls or Black Sage Bench
+    Smoked brisket demands a wine with a savory, peppery edge. BC Syrah is world-class, often showing notes of smoked meat, black olive, and dark berries that mirror the brisket’s bark. The tannins are plush, providing a seamless texture against the meat.
+    *   **Why it works:** The peppery spice of the wine acts as a flavor bridge to the smoke, while the dark fruit profile complements the richness of the beef.
+    *   **Wineries to try:** **Le Vieux Pin** (Oliver), **Nichol Vineyard** (Naramata Bench), or **Painted Rock Estate Winery** (Skaha Bench).
+    
+    ### 2. The "Contrast" Choice: Cabernet Franc from the Similkameen Valley
+    If you prefer something with more acidity and a "green" herbal lift to balance the sweetness of the cornbread, look to the Similkameen. The region’s rocky, wind-swept terroir produces Cabernet Franc with vibrant acidity and distinct notes of bell pepper and raspberry.
+    *   **Why it works:** The high acidity cleanses the palate after each bite of fatty brisket, while the herbal notes provide a refreshing contrast to the heavy, smoky flavors.
+    *   **Wineries to try:** **Orofino Vineyards** (Cawston), **Corcelettes Estate Winery** (Keremeos), or **Clos du Soleil** (Keremeos).
+    
+    **Sommelier Tip:** Serve these slightly below room temperature (around 16-18°C) to keep the alcohol from feeling too "hot" alongside the spicy BBQ rub. All these selections fall comfortably within your $30–$50 budget. Enjoy your BBQ!
+
+  [gemini-3-flash-preview]  time=6.30s  in=0 out=0
+  ----------------------------------------------------------------------
+    For a hearty BBQ featuring smoked brisket, you need a wine with enough structure to cut through the fat and enough fruit intensity to stand up to the smoke.
+    
+    **The Top Pick: South Okanagan Syrah**
+    Syrah is the ultimate brisket companion. The natural cracked black pepper and savory olive notes in BC Syrah act as a "flavor bridge" to the brisket’s spice rub. The bold tannins provide a "scrubbing" effect on the palate, cleansing the richness of the meat.
+    *   **Sub-region:** Look for the **Black Sage Bench** or **Osoyoos**, where the heat produces the necessary ripeness and intensity.
+    *   **Wineries:** **Le Vieux Pin** (specifically their *Cuvée Violette*) or **Black Hills Estate Winery**. Both offer world-class Syrah in the $35–$50 range.
+    
+    **The Alternative: Golden Mile Bench Merlot**
+    If you prefer something plusher, a BC Merlot is ideal. BC’s version of this grape maintains high natural acidity, which is crucial for balancing the tangy vinegar or creamy dressing in your coleslaw. The ripe plum and cocoa notes also complement the buttery sweetness of the cornbread.
+    *   **Sub-region:** The **Golden Mile Bench** near Oliver. The western slope provides morning sun and afternoon shade, preserving acidity while developing deep fruit.
+    *   **Wineries:** **Painted Rock Estate Winery** (their Merlot is iconic) or **CheckMate Artisanal Winery** (look for *Opening Gambit* if you can stretch the budget, or **Burrowing Owl** for a classic $40 option).
+    
+    **Sommelier Tip:** Serve these reds slightly cool (around 16°C/60°F). The heat of the BBQ and the brisket can make high-alcohol reds feel "flabby" if they are too warm; a slight chill keeps the fruit vibrant and the pairing refreshing.
+
+  [gemini-2.5-pro]  time=19.85s  in=0 out=0
+  ----------------------------------------------------------------------
+    An excellent choice for a BC BBQ! The rich, smoky brisket calls for a wine with structure and complementary flavours.
+    
+    My top recommendation is a **Syrah**. The tannins and body are crucial for cutting through the brisket's richness and fat. Furthermore, BC Syrah often has peppery, dark fruit, and even smoky or meaty notes that create a perfect flavour bridge to the barbecue.
+    *   **Region:** Look to the hot, arid South Okanagan, specifically the Black Sage Bench or Osoyoos, where Syrah ripens beautifully.
+    *   **Wineries:** Le Vieux Pin Estate Winery ("Cuvée Violette"), Moon Curser Vineyards, or Burrowing Owl Estate Winery all produce outstanding examples in your price range.
+    
+    For a slightly different approach, consider a **Cabernet Franc**. It offers a medium body, bright acidity, and subtle herbal notes of sage or bell pepper. This acidity will refresh the palate and handle the coleslaw's tang, while the herbal character can complement spices in the brisket rub.
+    *   **Region:** A Cabernet Franc from the mineral-rich soils of the Similkameen Valley or the Okanagan's Golden Mile Bench would be superb.
+    *   **Wineries:** Look for bottles from Tinhorn Creek Vineyards, La Stella Winery, or Painted Rock Estate Winery.
+    
+    Enjoy the feast
+
+  [gemini-2.5-flash]  time=11.55s  in=0 out=0
+  ----------------------------------------------------------------------
+    For your delicious BBQ spread of smoked brisket, coleslaw, and cornbread, you'll want wines that can stand up to the rich, smoky flavours while offering a refreshing counterpoint.
+    
+    **1. The Star Pairing: BC Syrah**
+    *   **Why it works:** Syrah is a classic for smoked meats. Its bold black fruit (blackberry, plum), peppery spice, and often a hint of smoky or savory notes perfectly complement the brisket's richness and smoke. The wine's acidity will cut through the fat, while its firm tannins stand up to the meat's texture.
+    *   **Specifics:** Look for Syrah from the warmer, southern Okanagan Valley sub-regions like **Black Sage Bench, Golden Mile Bench, or Osoyoos**. These areas produce Syrah with excellent ripeness, structure, and complexity.
+    *   **Wineries ($35-50):**
+        *   **Nk'Mip Cellars** (Osoyoos) - often has a lovely smoky, peppery character.
+        *   **Black Hills Estate Winery** (Black Sage Bench) - known for elegant yet powerful Syrah.
+        *   **Le Vieux Pin** (Oliver) - produces a more Rhône-style, savory Syrah.
+    
+    **2. A Refreshing Counterpoint: Dry Riesling**
+    *   **Why it works:** While a red is primary, a crisp white can be a fantastic palate cleanser, especially with the tangy coleslaw and sweet cornbread. A dry Riesling's high acidity and bright citrus notes will cut through the creaminess of the coleslaw and refresh your palate from the rich brisket, without clashing with the smoky elements.
+    *   **Specifics:** Seek out dry styles from cooler Okanagan sub-regions like **Lake Country, Naramata Bench, or Okanagan Falls**.
+    *   **Wineries ($30-45):**
+        *   **Tantalus Vineyards** (Kelowna/Lake Country) - renowned for their precise, mineral-driven Rieslings.
+        *   **Wild Goose Vineyards** (Okanagan Falls) - consistently produces excellent, food-friendly Rieslings.
+    
+    Enjoy your BBQ!
+
+  [gemini-2.5-flash-lite]  time=2.45s  in=0 out=0
+  ----------------------------------------------------------------------
+    This is a fantastic BBQ spread, and BC has some excellent wines to complement it!
+    
+    For your smoked brisket, we need a wine with enough body and structure to stand up to the rich, smoky flavors, but also with some acidity to cut through the fat.
+    
+    I recommend a **Syrah** from the **Okanagan Valley**. Syrah, especially from warmer sub-regions like the **Black Sage Bench** or **McKinney Bench**, often exhibits dark fruit notes (blackberry, plum) with peppery, smoky, and sometimes even meaty undertones that will beautifully echo the brisket's smoke. The tannins will also provide a nice contrast to the richness.
+    
+    Alternatively, a **Merlot** from the **Naramata Bench** or **South Okanagan** could work. BC Merlots often have plush fruit, a smooth texture, and enough structure to handle the brisket without overpowering it.
+    
+    For the coleslaw and cornbread, these are a bit more flexible. A medium-bodied red like the Syrah or Merlot will handle them well. If you wanted something slightly lighter to sip on, a **Cabernet Franc** from the **Okanagan** could also be a good choice, offering bright red fruit and herbaceous notes.
+    
+    **Winery Suggestions (within your budget):**
+    
+    *   **Syrah:** Burrowing Owl Estate Winery, Tinhorn Creek Vineyards, LeComte Winery
+    *   **Merlot:** Poplar Grove Winery, Painted Rock Estate Winery, Nk'Mip Cellars
+    
+    Enjoy your BBQ!
+
+
+--- Query 3: I'm cooking Thai green curry with prawns. Most people say don't pair wine with spicy food, but I wan... ---
+
+  [gemini-3.5-flash]  time=9.09s  in=0 out=0
+  ----------------------------------------------------------------------
+    Pairing wine with Thai green curry is absolutely possible—and delicious! The key is balancing the chili heat, rich coconut milk, and aromatic herbs. 
+    
+    I highly recommend an **off-dry Riesling** or an aromatic **Gewürztraminer** from the cooler sub-regions of the Okanagan Valley.
+    
+    ### Why the pairing works:
+    * **The Sugar "Fire Extinguisher":** High alcohol amplifies chili heat, but residual sugar tames it. An off-dry wine coats the palate, softening the curry's spice.
+    * **Acid vs. Fat:** High natural acidity cuts through the rich, creamy coconut milk, cleansing your palate and keeping the prawns tasting fresh.
+    * **Flavor Bridges:** The lemongrass, galangal, and lime leaf in the curry find a perfect mirror in the citrus, ginger, and stone fruit profiles of these cool-climate wines.
+    
+    ### Specific BC Recommendations:
+    
+    1. **Tantalus Vineyards Riesling (East Kelowna Slopes):** East Kelowna’s cool climate yields Rieslings with searing acidity and pristine mineral tension. Tantalus is a benchmark producer; their classic Riesling has the perfect touch of residual sugar and bright lime notes to make the prawns sing.
+    2. **Synchromesh Wines Riesling (Okanagan Falls):** Synchromesh specializes in Riesling, focusing on low-alcohol, off-dry styles with incredible acid-to-sugar balance. Their *Four Shadows* or *Storm Haven* bottlings offer the precise tension needed to cut through the curry's richness.
+    3. **Wild Goose Vineyards Gewürztraminer (Okanagan Falls):** If you want to lean into the aromatic spices of the curry paste, this is a classic. It is off-dry and bursting with lychee, rose petal, and ginger spice, which beautifully matches the exotic aromatics of a green curry.
+
+  [gemini-3.1-pro-preview]  time=15.77s  in=0 out=0
+  ----------------------------------------------------------------------
+    Whoever told you not to pair wine with spicy food hasn't experienced the magic of residual sugar! For a spicy Thai green curry with prawns, you need a wine that balances heat, cuts through richness, and complements aromatic herbs. 
+    
+    **Why it works:** 
+    An off-dry, high-acid aromatic white is your best friend here. A touch of residual sugar acts as a fire blanket, cooling the chili heat on your palate. Meanwhile, zippy acidity slices through the rich, creamy coconut milk. Finally, the wine's natural citrus and floral aromatics create a beautiful flavor bridge to the lemongrass, galangal, and Thai basil, while the lack of oak keeps the pairing fresh and seafood-friendly.
+    
+    **The Varietal & Region:** 
+    Look for a vibrant, off-dry Riesling from the cooler pockets of East Kelowna or Okanagan Falls, or a highly aromatic Gewürztraminer-based blend from the Naramata Bench. 
+    
+    **Specific BC Winery Recommendations:**
+    
+    1. **Tantalus Vineyards (East Kelowna):** Their classic **Riesling** is iconic. It possesses the perfect tension of electric acidity and subtle sweetness to handle the curry's heat while elevating the natural sweetness of the prawns. 
+    2. **Synchromesh Wines (Okanagan Falls):** Absolute masters of Riesling. Their **Storm Haven Vineyard Riesling** offers juicy stone fruit and lime leaf notes that harmonize flawlessly with green curry paste.
+    3. **JoieFarm (Naramata Bench):** If you prefer a slightly rounder texture, their **"A Noble Blend"** (a Gewürztraminer and Riesling-dominant blend) offers lychee, guava, and rose petal notes that sing alongside coconut milk and Thai spices. 
+    
+    Serve these well-chilled, and you'll completely change your mind about pairing wine with spicy food!
+
+  [gemini-3.1-flash-lite]  time=3.67s  in=0 out=0
+  ----------------------------------------------------------------------
+    Pairing wine with Thai green curry is a classic sommelier challenge. The key is to avoid high alcohol and heavy tannins, which amplify chili heat. Instead, look for **aromatic, high-acid whites with a touch of residual sugar** to tame the spice and bridge the coconut milk’s creaminess.
+    
+    ### The Recommendation: Off-Dry Riesling or Gewürztraminer
+    You need a wine that acts like a squeeze of lime—cutting through the richness of the coconut milk while providing a cooling effect against the green chili.
+    
+    *   **Why it works:** The vibrant acidity cleanses the palate, while the slight sweetness (residual sugar) acts as a buffer against the heat. The floral and stone-fruit aromatics of these varietals mirror the lemongrass, galangal, and kaffir lime leaves in your curry.
+    *   **The Region:** Look for cool-climate fruit from the **Okanagan Valley** (specifically the northern reaches like Lake Country or the cooler slopes of the Naramata Bench).
+    
+    ### Top BC Producers:
+    1.  **Tantalus Vineyards (East Kelowna):** Their *Old Vines Riesling* is world-class. It has the piercing acidity and structural tension to stand up to the complex aromatics of Thai curry.
+    2.  **50th Parallel Estate (Lake Country):** Their *Gewürztraminer* is legendary in BC. It offers intense lychee and rose petal notes that harmonize beautifully with the ginger and coconut base.
+    3.  **Wild Goose Vineyards (Okanagan Falls):** Their *Mystic River Pinot Blanc* or *Riesling* are consistently excellent, offer great value, and possess that essential "off-dry" profile that makes spicy food sing.
+    
+    **Pro-tip:** Serve the wine well-chilled (around 8-10°C). The lower temperature provides an immediate sensory contrast to the heat of the curry, making the prawns taste sweeter and the spices more nuanced. Enjoy!
+
+  [gemini-3-flash-preview]  time=6.79s  in=0 out=0
+  ----------------------------------------------------------------------
+    Pairing wine with Thai green curry is a thrilling challenge. The key is managing the "three pillars" of the dish: the **heat** of the chilies, the **creaminess** of the coconut milk, and the **herbal aromatics** (lemongrass, galangal, and lime leaf).
+    
+    To make this work, you need a wine with high acidity to cut through the fat, low alcohol to prevent the chili heat from burning your palate, and a touch of residual sugar to act as a "fire extinguisher."
+    
+    **1. Off-Dry Riesling (North Okanagan/Kelowna)**
+    An off-dry Riesling is the gold standard here. The slight sweetness tames the spice, while the vibrant lime and stone fruit notes provide a perfect flavor bridge to the curry’s citrus elements.
+    *   **Specifics:** Look for a Riesling from the **East Kelowna Slopes** or **Lake Country**.
+    *   **Wineries:** **Tantalus Vineyards** (Old Vines Riesling) or **Synchromesh Wines** (their various "Storm Haven" bottlings offer precise sweetness levels).
+    
+    **2. Gewürztraminer (Summerland/Okanagan Falls)**
+    Gewürztraminer is naturally aromatic with notes of lychee, rose petal, and ginger. These exotic flavors mirror the aromatics in green curry paste, creating a seamless "flavor bridge."
+    *   **Specifics:** A cool-climate style from **Summerland** ensures the wine stays fresh rather than flabby.
+    *   **Wineries:** **Wild Goose Vineyards** (their "Mystic River" is legendary) or **Dirty Laundry Vineyard**.
+    
+    **3. Aromatic White Blends**
+    If you want something versatile, a blend of Pinot Gris, Gewürztraminer, and Ehrenfelser offers a lush texture that stands up to the prawns.
+    *   **Winery:** **JoieFarm** (A Noble Blend) from the **Naramata Bench**.
+    
+    **Pro Tip:** Serve these wines very well-chilled. The colder temperature helps soothe the palate against the curry's heat. Enjoy!
+
+  [gemini-2.5-pro]  time=24.21s  in=0 out=0
+  ----------------------------------------------------------------------
+    An excellent choice! Pairing wine with spicy food isn't a rule to be broken, but a puzzle to be solved. For Thai green curry, the key is to counteract the heat and complement the aromatics.
+    
+    The perfect solution is an **off-dry Riesling**.
+    
+    **Why it works:** The slight sweetness (residual sugar) in an off-dry style masterfully tames the chili heat, acting as a cooling counterpoint on your palate. Simultaneously, Riesling’s hallmark high acidity slices through the rich coconut milk, cleansing your palate and preventing the dish from feeling heavy. The wine's notes of lime, green apple, and wet stone create a beautiful flavor bridge to the curry's lemongrass and kaffir lime aromatics.
+    
+    **What to look for:** An **Okanagan Valley Riesling**. The region's warm days and cool nights create wines with ripe fruit flavours and the crucial backbone of acidity.
+    
+    **Wineries to seek out:**
+    1.  **Tantalus Vineyards (Kelowna):** A benchmark for BC Riesling. Their classic Riesling is consistently brilliant for this pairing.
+    2.  **Synchromesh Wines (Okanagan Falls):** Known for their laser-focused, high-acid Rieslings, often with different sweetness levels clearly marked on the bottle.
+    3.  **CedarCreek Estate Winery (Kelowna):** Their Platinum or Estate Rieslings offer incredible purity and balance that will sing with the curry.
+
+  [gemini-2.5-flash]  time=9.94s  in=0 out=0
+  ----------------------------------------------------------------------
+    Pairing wine with spicy Thai green curry is a delightful challenge, and BC has some fantastic solutions! The key is to find wines with **good acidity** to cut through the richness of the coconut milk, **low alcohol** to avoid amplifying the heat, and ideally a touch of **residual sugar** to balance the spice.
+    
+    1.  **Off-Dry Riesling:** This is your best bet. The **natural high acidity** and **hint of sweetness** in an off-dry Riesling will beautifully temper the chili heat and refresh your palate. Its vibrant citrus and mineral notes also complement the lemongrass and kaffir lime in the curry.
+        *   **Region:** Look for these from the **Okanagan Valley**, particularly from cooler sites like **Lake Country** or the **Naramata Bench**.
+        *   **Wineries:** **Tantalus Vineyards** (their Dry Riesling often has a touch of sweetness), **CedarCreek Estate Winery**, or **Wild Goose Vineyards** are excellent choices.
+    
+    2.  **Aromatic Gewürztraminer:** If you enjoy bolder aromatics, an off-dry Gewürztraminer can be a fantastic match. Its characteristic notes of lychee, rose, and ginger can echo the curry's spices and herbs, creating a harmonious bridge, while its inherent sweetness and acidity handle the heat.
+        *   **Region:** Again, the **Okanagan Valley** excels, especially from areas like **Okanagan Falls** or the **Golden Mile Bench**.
+        *   **Wineries:** Try **Quails' Gate Estate Winery**, **Wild Goose Vineyards**, or **See Ya Later Ranch**.
+    
+    Both options offer the acidity and balance needed to make this pairing a delicious success!
+
+  [gemini-2.5-flash-lite]  time=2.08s  in=0 out=0
+  ----------------------------------------------------------------------
+    Pairing wine with spicy food can be tricky, but a well-chosen BC wine can be a fantastic complement! The key is to find something with a touch of sweetness to temper the heat, and good acidity to cut through the richness of the coconut milk.
+    
+    For your Thai green curry with prawns, I recommend a **dry or off-dry Riesling** from the **Okanagan Valley**. The slight residual sugar in an off-dry style will beautifully balance the chili heat, while the vibrant acidity will cleanse your palate between bites. Look for notes of citrus and stone fruit, which will echo the aromatic elements of the curry.
+    
+    Alternatively, a **Gewürztraminer** from the **Naramata Bench** or **Okanagan Falls** would also be delightful. Its inherent aromatic profile, often featuring lychee, rose, and ginger, will harmonize with the fragrant spices of the curry.
+    
+    Here are a few BC wineries to explore:
+    
+    *   **CedarCreek Estate Winery** (Okanagan Valley) - Known for their excellent Rieslings.
+    *   **Quails' Gate Winery** (Okanagan Valley) - Offers a range of aromatic whites, including Riesling.
+    *   **Tantalus Estate Winery** (Okanagan Valley) - Produces exceptional Rieslings with great aging potential.
+    
+    These wines offer the perfect balance of sweetness, acidity, and aromatic complexity to elevate your Thai green curry experience.
+
+
+================================================================================
+  TEST: SYNTHESIS
+================================================================================
+
+--- Query 1: Synthesize these results into a helpful response: ---
+
+  [gemini-3.5-flash]  time=10.03s  in=0 out=0
+  ----------------------------------------------------------------------
+    You can purchase Tantalus Riesling at several retailers, with prices ranging from **$23.99 to $24.99** for the regular **2023 Riesling**, and **$27.99 to $29.50** for the highly-rated **2022 Old Vines Riesling**. 
+    
+    Here is a side-by-side comparison of prices and availability across stores:
+    
+    ### 1. Tantalus Old Vines Riesling 2022
+    This vintage is highly acclaimed by critics (scoring 92–93 points) and is praised for its crisp acidity, lime blossom, green apple, and classic slate/petrol minerality.
+    
+    *   **Okanagan Cellars:** **$27.99** *(Best Price)* | In Stock (6 units)
+    *   **BC Liquor:** **$28.99** | Good availability (47 units across 12 stores)
+    *   **Everything Wine:** **$28.99** | Available for delivery and pickup
+    *   **Marquis Wine Cellars:** **$29.50** | In Stock (3 units)
+    
+    ### 2. Tantalus Riesling 2023
+    A slightly younger, more budget-friendly option that still rates highly with consumers (4.3/5 stars).
+    
+    *   **Okanagan Cellars:** **$23.99** *(Best Price)* | In Stock (4 units)
+    *   **BC Liquor:** **$24.99** | Available at 8 stores (31 units)
+    
+    **Recommendation:** If you are looking for the best deal, **Okanagan Cellars** offers the lowest price for both bottles, though stock is limited. For the best local availability or delivery options, **BC Liquor** and **Everything Wine** are your best bets.
+
+  [gemini-3.1-pro-preview]  time=16.08s  in=0 out=0
+  ----------------------------------------------------------------------
+    You can buy Tantalus Riesling at several retailers, including BC Liquor, Okanagan Cellars, Everything Wine, and Marquis Wine Cellars. There are currently two different wines available, with prices ranging from $23.99 to $29.50 depending on the bottle and the store. 
+    
+    Here is the side-by-side comparison of where to find them and for how much:
+    
+    **Tantalus Old Vines Riesling 2022**
+    This is a highly acclaimed wine, scoring 92-93 points from critics who praise its purity, precision, and classic notes of lime blossom, green apple, wet stone, and petrol. It has great aging potential (up to 2034).
+    *   **Okanagan Cellars:** $27.99 *(Best price)* — 6 in stock
+    *   **BC Liquor:** $28.99 — Available at 12 stores (47 units total)
+    *   **Everything Wine:** $28.99 — Available for delivery and pickup
+    *   **Marquis Wine Cellars:** $29.50 — 3 in stock
+    
+    **Tantalus Riesling 2023**
+    The standard vintage is slightly more affordable and highly rated by consumers (4.3/5 stars). 
+    *   **Okanagan Cellars:** $23.99 *(Best price)* — 4 in stock
+    *   **BC Liquor:** $24.99 — Available at 8 stores (31 units total)
+    
+    **Recommendation:** If you are looking for the best deal, **Okanagan Cellars** has the lowest prices for both bottles. However, **BC Liquor** has the widest availability if you need to pick up a bottle locally today.
+
+  [gemini-3.1-flash-lite]  time=3.30s  in=0 out=0
+  ----------------------------------------------------------------------
+    You can purchase Tantalus Riesling from several retailers, with prices varying slightly depending on the specific bottling and store. Both the **Old Vines Riesling 2022** and the standard **Riesling 2023** are widely available.
+    
+    ### Price Comparison
+    
+    | Wine | Okanagan Cellars | BC Liquor Stores | Everything Wine | Marquis Wine Cellars |
+    | :--- | :--- | :--- | :--- | :--- |
+    | **Old Vines Riesling 2022** | **$27.99** | $28.99 | $28.99 | $29.50 |
+    | **Riesling 2023** | **$23.99** | $24.99 | N/A | N/A |
+    
+    ### Availability
+    *   **Okanagan Cellars** currently offers the best pricing for both labels, with limited stock on hand (6 bottles of Old Vines; 4 bottles of standard).
+    *   **BC Liquor Stores** have the widest availability, with the Old Vines Riesling stocked in 12 locations and the standard Riesling in 8.
+    *   **Everything Wine** carries the Old Vines 2022 at the standard retail price of $28.99 and offers both delivery and pickup options.
+    
+    ### Expert Insight
+    The **Tantalus Old Vines Riesling 2022** is highly acclaimed by critics, earning scores of **92–93 points**. Experts describe it as a "classic BC Riesling" featuring notes of lime blossom, green apple, wet stone, and a signature hint of petrol. It is noted for its excellent aging potential (2024–2034) and is considered a high-value purchase.
+
+  [gemini-3-flash-preview]  time=5.67s  in=0 out=0
+  ----------------------------------------------------------------------
+    You can find Tantalus Riesling at several retailers, including **BC Liquor Stores**, **Okanagan Cellars**, **Everything Wine**, and **Marquis Wine Cellars**. 
+    
+    The price typically ranges from **$23.99 to $24.99** for the standard Riesling and **$27.99 to $29.50** for the highly-rated Old Vines Riesling.
+    
+    ### Price & Availability Comparison
+    
+    | Wine | Store | Price | Availability |
+    | :--- | :--- | :--- | :--- |
+    | **Tantalus Old Vines Riesling 2022** | Okanagan Cellars | **$27.99** | In Stock (6) |
+    | | BC Liquor Stores | $28.99 | 12 stores (47 units) |
+    | | Everything Wine | $28.99 | Delivery & Pickup |
+    | | Marquis Wine Cellars | $29.50 | In Stock (3) |
+    | **Tantalus Riesling 2023** | Okanagan Cellars | **$23.99** | In Stock (4) |
+    | | BC Liquor Stores | $24.99 | 8 stores (31 units) |
+    
+    ### Which one should you choose?
+    *   **Tantalus Old Vines Riesling 2022:** This is the more premium option, receiving critical acclaim with scores of **92–93 points** from experts like John Szabo MS. It is described as having stunning purity with notes of lime blossom, green apple, and slate minerality. It is built to age well through 2034.
+    *   **Tantalus Riesling 2023:** A more affordable, high-quality entry point. It maintains the classic crisp acidity and BC VQA standards Tantalus is known for, currently retailing for about $4–$5 less than the Old Vines bottling.
+    
+    **Best Value Tip:** **Okanagan Cellars** currently offers the lowest price for both varieties, though **BC Liquor Stores** maintains the most significant stock across the province.
+
+  [gemini-2.5-pro]  time=16.62s  in=0 out=0
+  ----------------------------------------------------------------------
+    Of course! Here is a summary of where you can buy Tantalus Riesling and how much it costs.
+    
+    You can find two different Tantalus Rieslings currently available: the highly-rated **Old Vines Riesling 2022** and the more budget-friendly **Riesling 2023**.
+    
+    ### **Tantalus Old Vines Riesling 2022**
+    
+    This is a critically acclaimed wine, scoring 92-93 points from reviewers. It's noted for its purity, crisp acidity, and classic notes of lime, green apple, wet stone, and a hint of petrol.
+    
+    **Price & Availability Comparison:**
+    *   **Okanagan Cellars:** **$27.99** (In Stock - 6 units) - *Best Price*
+    *   **BC Liquor Stores:** **$28.99** (Available at 12 stores)
+    *   **Everything Wine:** **$28.99** (Available for delivery and pickup)
+    *   **Marquis Wine Cellars:** **$29.50** (In Stock - 3 units)
+    
+    ### **Tantalus Riesling 2023**
+    
+    This is the winery's standard Riesling, offering great value.
+    
+    **Price & Availability Comparison:**
+    *   **Okanagan Cellars:** **$23.99** (In Stock - 4 units) - *Best Price*
+    *   **BC Liquor Stores:** **$24.99** (Available at 8 stores)
+    
+    **Summary:**
+    For the best price on both wines, **Okanagan Cellars** is your top choice, though stock is limited. **BC Liquor Stores** offer wider availability for a slightly higher price.
+
+  [gemini-2.5-flash]  time=8.26s  in=0 out=0
+  ----------------------------------------------------------------------
+    You can find two different Tantalus Riesling wines available:
+    
+    ---
+    
+    ### 1. Tantalus Vineyards Old Vines Riesling 2022
+    
+    This BC VQA wine (0.750L, 12.5% ABV) is highly rated by consumers (4.6/5 from 23 votes) and critics. John Szabo MS scored it 93 points, noting its "stunning purity and precision" with lime blossom, wet stone, and a hint of petrol, recommending it for drinking 2024-2034. Sara d'Amato gave it 92 points, calling it "classic BC Riesling" with green apple, white flowers, and slate minerality. It's described as aromatic with notes of lime, green apple, and petrol, offering crisp acidity and a long mineral finish.
+    
+    **Where to buy & Price:**
+    
+    *   **Okanagan Cellars:** $27.99 (6 bottles in stock) - *Lowest price*
+    *   **BC Liquor:** $28.99 (available at 12 stores, 47 units total)
+    *   **Everything Wine:** $28.99 (available for delivery and pick up)
+    *   **Marquis Wine Cellars:** $29.50 (3 bottles in stock) - *Highest price*
+    
+    ---
+    
+    ### 2. Tantalus Vineyards Riesling 2023
+    
+    This BC VQA wine has a consumer rating of 4.3/5 (8 votes).
+    
+    **Where to buy & Price:**
+    
+    *   **Okanagan Cellars:** $23.99 (4 bottles in stock) - *Lowest price*
+    *   **BC Liquor:** $24.99 (available at 8 stores, 31 units total)
+
+  [gemini-2.5-flash-lite]  time=1.57s  in=0 out=0
+  ----------------------------------------------------------------------
+    You can buy Tantalus Riesling at several stores, with prices varying slightly.
+    
+    **Tantalus Vineyards Old Vines Riesling 2022:**
+    
+    *   **BC Liquor Stores:** $28.99, available at 12 stores with 47 units in stock.
+    *   **Okanagan Cellars:** $27.99, in stock with 6 units.
+    *   **Everything Wine:** $28.99, available for delivery and pickup.
+    *   **Marquis Wine Cellars:** $29.50, in stock with 3 units.
+    
+    This wine is highly rated, with tasting notes mentioning lime, green apple, and petrol, and a crisp acidity with a long mineral finish. Reviewers have scored it 93 and 92 points, praising its purity, precision, and value.
+    
+    **Tantalus Vineyards Riesling 2023:**
+    
+    *   **BC Liquor Stores:** $24.99, available at 8 stores with 31 units in stock.
+    *   **Okanagan Cellars:** $23.99, in stock with 4 units.
+
+
+--- Query 2: Synthesize these results into a helpful response: ---
+
+  [gemini-3.5-flash]  time=8.19s  in=0 out=0
+  ----------------------------------------------------------------------
+    Here are the best BC Pinot Noir options under $40 with strong reviews, ranked from the highest-rated premium option to the best budget-friendly choice. 
+    
+    ### 1. Top Pick (Premium Quality): CedarCreek Platinum Block 2 Pinot Noir 2021
+    This is the highest-rated wine that fits under your $40 budget. Reviewers call it an elegant, classic Okanagan Pinot with notes of cherry, raspberry, and forest floor. 
+    * **Reviews:** 91 points (Anthony Gismondi), 90 points (John Szabo MS). Consumer rating: 4.2/5.
+    * **Price & Availability:** 
+      * **Marquis Wine Cellars:** **$38.50** (In stock - 2 units) *– Best Price*
+      * **BC Liquor:** **$39.99** (Low stock - 9 units across 4 stores)
+    
+    ### 2. Best Balance of Price & Quality: Meyer Family Vineyards Pinot Noir 2022
+    An excellent mid-range option. Critics describe it as an easy-drinking but complex wine featuring bright cherry, cranberry, and a touch of spice.
+    * **Reviews:** 89 points & 4/5 stars for value (Sara d'Amato). Consumer rating: 4.0/5.
+    * **Price & Availability:** 
+      * **Okanagan Cellars:** **$28.99** (In stock - 3 units) *– Best Price*
+      * **BC Liquor:** **$29.99** (Great availability - 42 units across 10 stores)
+      * **Everything Wine:** **$29.99** (Available for delivery)
+    
+    ### 3. Best Budget Option: Haywire Pinot Noir 2022
+    If you are looking for an approachable, everyday Pinot Noir, this is a highly accessible choice that offers great bang for your buck. Critics rate it as an honest, straightforward value wine.
+    * **Reviews:** 87 points & 5/5 stars for value (Anthony Gismondi). Consumer rating: 3.8/5.
+    * **Price & Availability:**
+      * **Okanagan Cellars:** **$23.99** (In stock - 5 units) *– Best Price*
+      * **BC Liquor:** **$24.99** (Widely available - 67 units across 15 stores)
+      * **Everything Wine:** **$24.99** (Pick-up only, no delivery)
+    
+    ***
+    
+    *Note: If you are willing to stretch your budget slightly, **Quails' Gate Stewart Family Reserve Pinot Noir 2021** is highly rated by consumers (4.5/5), but it sits just over your budget at **$44.99** at BC Liquor (18 units available across 6 stores).*
+
+  [gemini-3.1-pro-preview]  time=21.40s  in=0 out=0
+  ----------------------------------------------------------------------
+    Here are three excellent BC VQA Pinot Noirs under $40 that fit your criteria, ranging from a highly-rated premium option to a great budget pick. *(Note: Quails' Gate Stewart Family Reserve was excluded as it exceeds your budget at $44.99).*
+    
+    **1. CedarCreek Platinum Block 2 Pinot Noir 2021 (Top Rated)**
+    This is your best option for a premium, highly-rated Pinot Noir just under your budget. Critics Anthony Gismondi (91 pts) and John Szabo (90 pts) praise it as an "elegant and refined" classic Okanagan Pinot with beautiful texture. Consumers rate it 4.2/5. 
+    *   **Marquis Wine Cellars:** $38.50 *(Best Price)* – 2 units in stock
+    *   **BC Liquor:** $39.99 – 9 units available across 4 stores
+    
+    **2. Meyer Family Vineyards Pinot Noir 2022 (Best Balance of Price & Quality)**
+    A fantastic mid-range option. Critic Sara d'Amato gave it 89 points (and 4/5 for value), noting its "bright cherry, cranberry, and a touch of spice" that is easy drinking but not simple. Consumers rate it 4.0/5.
+    *   **Okanagan Cellars:** $28.99 *(Best Price)* – 3 units in stock
+    *   **BC Liquor:** $29.99 – Widely available (42 units across 10 stores)
+    *   **Everything Wine:** $29.99 – Available for delivery
+    
+    **3. Haywire Pinot Noir 2022 (Best Budget Pick)**
+    If you want to stay well under budget, this is a solid choice. Anthony Gismondi gave it 87 points and a perfect 5/5 for value, calling it an "honest, straightforward Pinot." Consumers rate it 3.8/5.
+    *   **Okanagan Cellars:** $23.99 *(Best Price)* – 5 units in stock
+    *   **BC Liquor:** $24.99 – Widely available (67 units across 15 stores)
+    *   **Everything Wine:** $24.99 – Pick up only (no delivery available)
+    
+    **Recommendation:** If you want the highest quality wine for your $40, grab the **CedarCreek** from Marquis Wine Cellars to save a couple of dollars. If you want a great everyday wine and the convenience of delivery, the **Meyer Family** from Everything Wine is a fantastic value.
+
+  [gemini-3.1-flash-lite]  time=2.93s  in=0 out=0
+  ----------------------------------------------------------------------
+    For a high-quality BC Pinot Noir under $40, I recommend the **CedarCreek Platinum Block 2 Pinot Noir 2021**. It is the highest-rated option in your price range, consistently scoring 90–91 points from critics who praise its elegance and classic Okanagan profile.
+    
+    Here is a breakdown of your best options based on price and availability:
+    
+    ### Top Recommendations
+    
+    | Wine | Price Range | Critic Score | Best For... |
+    | :--- | :--- | :--- | :--- |
+    | **CedarCreek Platinum Block 2 (2021)** | $38.50 – $39.99 | 90–91 pts | Quality & Complexity |
+    | **Meyer Family Vineyards (2022)** | $28.99 – $29.99 | 89 pts | Best Value/Everyday |
+    | **Haywire Pinot Noir (2022)** | $23.99 – $24.99 | 87 pts | Budget-friendly |
+    
+    ---
+    
+    ### Where to Buy
+    
+    *   **CedarCreek Platinum Block 2 (2021):**
+        *   **Marquis Wine Cellars:** $38.50 (In stock)
+        *   **BC Liquor Stores:** $39.99 (Limited availability: 4 stores)
+    *   **Meyer Family Vineyards (2022):**
+        *   **Okanagan Cellars:** $28.99 (In stock)
+        *   **BC Liquor / Everything Wine:** $29.99 (Widely available)
+    *   **Haywire Pinot Noir (2022):**
+        *   **Okanagan Cellars:** $23.99 (In stock)
+        *   **BC Liquor / Everything Wine:** $24.99 (Widely available)
+    
+    ### Summary Advice
+    *   **For a special occasion:** Go with the **CedarCreek Platinum Block 2**. It is widely considered the superior wine among these choices, and you can save about $1.50 by purchasing it at Marquis Wine Cellars rather than a BC Liquor Store.
+    *   **For everyday drinking:** The **Meyer Family Vineyards Pinot Noir** offers excellent value at just under $30. It is highly accessible across multiple retailers, including delivery options via Everything Wine.
+    *   **Note:** While the *Quails' Gate Stewart Family Reserve* is highly rated (4.5/5), it sits at $44.99, exceeding your $40 budget.
+
+  [gemini-3-flash-preview]  time=7.18s  in=0 out=0
+  ----------------------------------------------------------------------
+    Based on your criteria, there are three excellent BC Pinot Noirs under $40 currently available. The **CedarCreek Platinum Block 2** is the highest-rated option, while the **Meyer Family** and **Haywire** offer the best value.
+    
+    ### 1. Top Quality: CedarCreek Platinum Block 2 Pinot Noir 2021
+    This is the most critically acclaimed option within your budget, described by critics as elegant and refined with notes of cherry and forest floor.
+    *   **Best Price:** **$38.50** at Marquis Wine Cellars (Save $1.49 vs. BC Liquor)
+    *   **Reviews:** 91 pts (Anthony Gismondi), 90 pts (John Szabo MS), 4.2/5 Consumer Rating.
+    *   **Availability:** **Low stock.** Only 2 units at Marquis Wine Cellars and 9 units across 4 BC Liquor stores.
+    
+    ### 2. Best Mid-Range Value: Meyer Family Vineyards Pinot Noir 2022
+    A highly reliable "classic" Okanagan Pinot that critics describe as bright and spicy. It offers a great balance between price and professional scoring.
+    *   **Best Price:** **$28.99** at Okanagan Cellars (Save $1.00 vs. BC Liquor/Everything Wine)
+    *   **Reviews:** 89 pts (Sara d'Amato), 4.0/5 Consumer Rating.
+    *   **Availability:** **High.** Widely available at 10 BC Liquor stores (42 units) and available for delivery via Everything Wine.
+    
+    ### 3. Best Budget Option: Haywire Pinot Noir 2022
+    If you are looking for an "honest, straightforward" Pinot at a lower price point, this is your best bet. It received a 5/5 value rating from critics.
+    *   **Best Price:** **$23.99** at Okanagan Cellars (Save $1.00 vs. BC Liquor/Everything Wine)
+    *   **Reviews:** 87 pts (Anthony Gismondi), 3.8/5 Consumer Rating.
+    *   **Availability:** **Excellent.** 15 BC Liquor stores have stock (67 units). Note: Everything Wine has this for pick-up only (no delivery).
+    
+    ### Comparison Summary
+    | Wine | Best Price | Critic Score | Stock Status |
+    | :--- | :--- | :--- | :--- |
+    | **CedarCreek Platinum** | $38.50 | 91 pts | Limited |
+    | **Meyer Family** | $28.99 | 89 pts | Good |
+    | **Haywire** | $23.99 | 87 pts | Plentiful |
+    
+    *Note: The Quails' Gate Stewart Family Reserve was excluded as it exceeds the $40 budget ($44.99).*
+
+  [gemini-2.5-pro]  time=21.15s  in=0 out=0
+  ----------------------------------------------------------------------
+    Of course! Here are the best BC Pinot Noirs under $40 with good reviews, based on your search results.
+    
+    The top-rated option is the **CedarCreek Platinum Block 2 Pinot Noir**, while the **Meyer Family Pinot Noir** offers excellent quality for under $30. For the best value, consider the **Haywire Pinot Noir**.
+    
+    Here is a detailed comparison:
+    
+    ### Top Pick: CedarCreek Platinum Block 2 Pinot Noir 2021
+    This is the highest-rated wine that meets your criteria, praised by critics for being elegant and refined with notes of cherry, raspberry, and forest floor.
+    
+    *   **Reviews:** 91 points (Anthony Gismondi), 90 points (John Szabo MS), 4.2/5 consumer rating.
+    *   **Price & Availability:**
+        *   **Marquis Wine Cellars:** **$38.50** (Best Price) - In Stock (Only 2 left)
+        *   **BC Liquor:** $39.99 - Low stock (9 units across 4 stores)
+    
+    ### Great Value: Meyer Family Vineyards Pinot Noir 2022
+    A well-regarded, easy-drinking Pinot with bright cherry and cranberry notes. A fantastic choice for its quality and price.
+    
+    *   **Reviews:** 89 points (Sara d'Amato), 4.0/5 consumer rating.
+    *   **Price & Availability:**
+        *   **Okanagan Cellars:** **$28.99** (Best Price) - In Stock (Only 3 left)
+        *   **BC Liquor:** $29.99 - Good availability (42 units across 10 stores)
+        *   **Everything Wine:** $29.99 - Available for delivery
+    
+    ### Budget Friendly: Haywire Pinot Noir 2022
+    Described as an honest, straightforward Pinot that offers excellent value for its price.
+    
+    *   **Reviews:** 87 points (Anthony Gismondi, 5/5 stars for value), 3.8/5 consumer rating.
+    *   **Price & Availability:**
+        *   **Okanagan Cellars:** **$23.99** (Best Price) - In Stock (5 left)
+        *   **BC Liquor:** $24.99 - Widely available (67 units across 15 stores)
+        *   **Everything Wine:** $24.99 - Pick up only
+
+  [gemini-2.5-flash]  time=7.94s  in=0 out=0
+  ----------------------------------------------------------------------
+    Here are a few excellent BC Pinot Noir options under $40, all with good reviews:
+    
+    1.  **Meyer Family Vineyards Pinot Noir 2022**
+        *   **Price:** As low as **$28.99** at Okanagan Cellars (in stock, 3 bottles). Also available at BCLiquor for $29.99 (widely available in 10 stores, 42 units) and Everything Wine for $29.99 (available for delivery).
+        *   **Reviews:** Consumer rating of 4.0/5 (3 votes). Sara d'Amato scored it 89 points, describing it as "Bright cherry, cranberry, and a touch of spice. Easy drinking but not simple," giving it 4/5 stars for value.
+        *   **Availability:** Good availability across multiple stores.
+    
+    2.  **Haywire Pinot Noir 2022**
+        *   **Price:** As low as **$23.99** at Okanagan Cellars (in stock, 5 bottles). Also available at BCLiquor for $24.99 (widely available in 15 stores, 67 units) and Everything Wine for $24.99 (pick up only).
+        *   **Reviews:** Consumer rating of 3.8/5 (7 votes). Anthony Gismondi gave it 87 points, calling it an "Honest, straightforward Pinot" and a "Good value at this price point," with a 5/5 stars for value.
+        *   **Availability:** Excellent availability.
+    
+    3.  **CedarCreek Platinum Block 2 Pinot Noir 2021**
+        *   **Price:** As low as **$38.50** at Marquis Wine Cellars (in stock, 2 bottles). Also available at BCLiquor for $39.99 (available in 4 stores, 9 units).
+        *   **Reviews:** Consumer rating of 4.2/5 (5 votes). It received strong professional scores: 91 points from Anthony Gismondi ("Elegant and refined. Cherry, raspberry, forest floor. Beautiful texture and length") and 90 points from John Szabo MS ("Well-made, classic Okanagan Pinot. Needs a year or two," best to drink 2024-2030).
+        *   **Availability:** More limited availability, especially at the lower price point.
+    
+    All these wines are BC VQA certified. The Meyer Family and Haywire offer great value and accessibility, while the CedarCreek offers a more premium experience within your budget, with excellent professional reviews.
+
+  [gemini-2.5-flash-lite]  time=3.24s  in=0 out=0
+  ----------------------------------------------------------------------
+    Here are a few BC Pinot Noirs under $40 with good reviews:
+    
+    **CedarCreek Platinum Block 2 Pinot Noir 2021**
+    *   **Price:** $39.99 at BC Liquor, $38.50 at Marquis Wine Cellars.
+    *   **Reviews:** Anthony Gismondi rated it 91 points, describing it as "Elegant and refined. Cherry, raspberry, forest floor. Beautiful texture and length." John Szabo MS rated it 90 points and suggests it will benefit from aging until 2024-2030.
+    *   **Availability:** Available at 4 BC Liquor stores (9 units) and 2 units at Marquis Wine Cellars.
+    
+    **Meyer Family Vineyards Pinot Noir 2022**
+    *   **Price:** $29.99 at BC Liquor and Everything Wine, $28.99 at Okanagan Cellars.
+    *   **Reviews:** Sara d'Amato rated it 89 points, noting "Bright cherry, cranberry, and a touch of spice. Easy drinking but not simple." She also gave it a Value rating of 4/5 stars.
+    *   **Availability:** Widely available at 10 BC Liquor stores (42 units), in stock at Okanagan Cellars (3 units), and available for delivery from Everything Wine.
+    
+    **Haywire Pinot Noir 2022**
+    *   **Price:** $24.99 at BC Liquor and Everything Wine, $23.99 at Okanagan Cellars.
+    *   **Reviews:** Anthony Gismondi rated it 87 points, calling it an "Honest, straightforward Pinot. Good value at this price point," and gave it a Value rating of 5/5 stars.
+    *   **Availability:** Most widely available at 15 BC Liquor stores (67 units), in stock at Okanagan Cellars (5 units), and available for pick-up only at Everything Wine.
+
+
+--- Query 3: Synthesize these results into a helpful response: ---
+
+  [gemini-3.5-flash]  time=6.31s  in=0 out=0
+  ----------------------------------------------------------------------
+    Based on reviews from top wine critics and local consumers, **yes, the Checkmate Attack Chardonnay 2019 is absolutely worth the price.** 
+    
+    At **$54.99**, critics widely agree that this wine punches well above its weight class, offering quality that rivals expensive French Burgundy for a fraction of the cost. 
+    
+    Here is a breakdown of why it is highly recommended, along with current pricing and availability:
+    
+    ### The Verdict: What the Experts Say
+    * **Anthony Gismondi (94 Points | Value: 5/5 stars):** Calls it "superb" and notes that it "rivals top-shelf Burgundy at a fraction of the price. Worth every penny."
+    * **John Szabo MS (95 Points | Value: 4/5 stars):** Describes it as "one of BC's greatest Chardonnays" with stunning balance, complexity, and a drinking window spanning 2023–2033.
+    * **Sara d'Amato (93 Points | Value: 4/5 stars):** Praises the "impeccable winemaking" that is precise and powerful without feeling heavy.
+    * **Consumers (4.8/5 stars):** Highly rated by local buyers.
+    
+    ### Price & Availability
+    If you want to buy a bottle, you will need to act quickly, as inventory is extremely limited:
+    
+    * **BC Liquor Stores:** **$54.99** 
+      * *Status:* **Extremely limited stock.** Only 5 units remain across 2 stores. 
+    * **Other Retailers:** Currently sold out. (No stock available at Everything Wine, Marquis Wine Cellars, or Okanagan Cellars).
+    
+    **Recommendation:** If you can find one of the last remaining bottles at BC Liquor, buy it. It is an exceptional, cellar-worthy BC VQA Chardonnay that delivers luxury-tier quality for under $60.
+
+  [gemini-3.1-pro-preview]  time=14.09s  in=0 out=0
+  ----------------------------------------------------------------------
+    **Yes, experts and consumers overwhelmingly agree that Checkmate Chardonnay is absolutely worth the price.** In fact, critic Anthony Gismondi states that it "rivals top-shelf Burgundy at a fraction of the price" and is "worth every penny."
+    
+    Here is the breakdown of its value, price, and where to find it:
+    
+    **Reviews & Value**
+    At **$54.99**, the 2019 Checkmate Attack Chardonnay delivers exceptional value for a premium wine:
+    * **Top Critics:** It boasts massive scores (93–95 points) from Master Sommeliers and wine critics like John Szabo and Sara d'Amato, who praise it as "one of BC's greatest Chardonnays" with "impeccable winemaking." All three reviewers gave it a 4/5 or 5/5 star rating specifically for value. 
+    * **Consumers:** Everyday buyers agree, giving it a stellar 4.8/5 rating. 
+    
+    **Availability (Act Fast)**
+    This wine is currently very difficult to find and is completely sold out at independent retailers like Everything Wine, Marquis Wine Cellars, and Okanagan Cellars. 
+    
+    Your only option right now is **BC Liquor**, where it retails for $54.99. However, stock is extremely limited—there are only **5 bottles left across 2 stores**. If you want to see if it lives up to the hype, you will need to track down one of those remaining bottles immediately!
+
+  [gemini-3.1-flash-lite]  time=3.39s  in=0 out=0
+  ----------------------------------------------------------------------
+    Yes, the **Checkmate Artisan Winery Attack Chardonnay 2019** is widely considered worth the price, especially if you enjoy high-end, Burgundian-style Chardonnays.
+    
+    ### Is it worth the price?
+    Critics consistently rate this wine as a top-tier Canadian Chardonnay, often comparing it favorably to premium French Burgundy. 
+    *   **Expert Consensus:** With scores ranging from **93 to 95 points**, critics like John Szabo MS and Anthony Gismondi highlight its complexity, balance, and aging potential (drinkable through 2033).
+    *   **Value Proposition:** Reviewers frequently note that while $54.99 is a premium price point, it offers significant value compared to the much higher costs of comparable top-shelf Burgundies.
+    
+    ### Availability & Pricing
+    Currently, the 2019 Attack Chardonnay is difficult to find at major independent retailers. 
+    
+    | Retailer | Price | Availability |
+    | :--- | :--- | :--- |
+    | **BC Liquor Stores** | $54.99 | **Limited** (Only 2 stores, 5 units total) |
+    | **Everything Wine** | N/A | Out of stock / Not carried |
+    | **Marquis Wine Cellars** | N/A | Out of stock / Not carried |
+    | **Okanagan Cellars** | N/A | Out of stock / Not carried |
+    
+    **Recommendation:** If you are interested in this bottle, you should act quickly. Given the very limited stock at BC Liquor Stores (only 5 units remaining), I recommend checking the specific store locations via the BC Liquor website immediately to see if any are near you. If you cannot secure a bottle, it is likely sold out across most major private retailers.
+
+  [gemini-3-flash-preview]  time=5.55s  in=0 out=0
+  ----------------------------------------------------------------------
+    Based on critical acclaim and consumer feedback, **Checkmate "Attack" Chardonnay is considered well worth the price**, particularly for those looking for a world-class wine that rivals expensive French Burgundy at a lower price point.
+    
+    ### **Value & Quality Summary**
+    Experts and consumers alike give this wine high marks for its complexity and balance:
+    *   **Critical Consensus:** Top critics (John Szabo MS, Anthony Gismondi, and Sara d’Amato) have awarded it scores between **93 and 95 points**. 
+    *   **Value Rating:** Critics rate its value at 4/5 or 5/5 stars, with Anthony Gismondi noting it "rivals top-shelf Burgundy at a fraction of the price."
+    *   **Consumer Sentiment:** It holds a near-perfect **4.8/5 rating** from local buyers.
+    
+    ### **Pricing & Availability**
+    The 2019 "Attack" Chardonnay is currently priced at **$54.99**, but it is becoming increasingly difficult to find.
+    
+    | Store | Price | Availability |
+    | :--- | :--- | :--- |
+    | **BC Liquor Stores** | $54.99 | **Very Limited** (Only 5 units left across 2 stores) |
+    | **Everything Wine** | N/A | Out of Stock |
+    | **Marquis Wine Cellars** | N/A | Out of Stock |
+    | **Okanagan Cellars** | N/A | Out of Stock |
+    
+    ### **Tasting Profile**
+    If you decide to purchase one of the remaining bottles, expect a wine that is "precise and powerful." Critics highlight notes of **toasted hazelnut, citrus curd, and wet stone**, suggesting it will drink well now through 2033.
+    
+    **Verdict:** If you can find one of the last remaining bottles at BC Liquor, it is a highly recommended purchase for fans of premium, complex Chardonnay.
+
+  [gemini-2.5-pro]  time=8.28s  in=0 out=0
+  ----------------------------------------------------------------------
+    Yes, according to top wine critics, the **Checkmate Attack Chardonnay 2019** is absolutely worth its price. It receives outstanding scores and is praised for offering quality that rivals more expensive wines from famous regions like Burgundy.
+    
+    Here’s a summary of what the experts and stores say:
+    
+    ### Critical Acclaim:
+    
+    The 2019 vintage is highly decorated, with critics agreeing it delivers exceptional quality and value:
+    
+    *   **John Szabo, MS (95 points):** Calls it "one of BC's greatest Chardonnays" with "stunning balance" and a long aging potential (drink now through 2033).
+    *   **Anthony Gismondi (94 points):** Declares it "superb" and says it "rivals top-shelf Burgundy at a fraction of the price," concluding it's "worth every penny."
+    *   **Sara d'Amato (93 points):** Notes its "impeccable winemaking," describing it as "precise and powerful."
+    
+    ### Price & Availability:
+    
+    Availability for this wine is currently very limited.
+    
+    *   **BC Liquor Stores:**
+        *   **Wine:** Checkmate Artisan Winery Attack Chardonnay 2019
+        *   **Price:** **$54.99**
+        *   **Status:** Very low stock. Available at only 2 stores with a total of 5 units remaining.
+    
+    *   **Other Retailers:**
+        *   Not found at Okanagan Cellars, Marquis Wine Cellars, or Everything Wine.
+    
+    In short, if you can find a bottle, it is considered an excellent purchase by professional reviewers.
+
+  [gemini-2.5-flash]  time=4.40s  in=0 out=0
+  ----------------------------------------------------------------------
+    Yes, based on expert reviews and consumer ratings, the **Checkmate Artisan Winery Attack Chardonnay 2019** appears to be well worth its price.
+    
+    Here's a breakdown:
+    
+    *   **Price & Availability:** It is available at **BC Liquor Stores** for **$54.99**. There are currently 5 units available across 2 stores. Other stores like Okanagan Cellars, Marquis Wine Cellars, and Everything Wine do not have it in stock.
+    *   **Expert Reviews:**
+        *   **John Szabo MS** awarded it **95 points**, calling it "one of BC's greatest Chardonnays" with "stunning balance between richness and freshness." He rated its value at 4/5 stars.
+        *   **Anthony Gismondi** gave it **94 points**, stating it's "superb" and "rivals top-shelf Burgundy at a fraction of the price," giving it a perfect 5/5 stars for value.
+        *   **Sara d'Amato** scored it **93 points**, noting its "impeccable winemaking" and describing it as "precise and powerful without being heavy." She rated its value at 4/5 stars.
+    *   **Consumer Rating:** Consumers at BC Liquor Stores also rate it highly, with an average of **4.8/5 stars** from 4 votes.
+    
+    Overall, the consensus from multiple wine experts and consumers is that this Chardonnay offers exceptional quality and strong value for its price, often compared favorably to more expensive Burgundies.
+
+  [gemini-2.5-flash-lite]  time=1.80s  in=0 out=0
+  ----------------------------------------------------------------------
+    The Checkmate Artisan Winery Attack Chardonnay 2019 is available at BC Liquor for $54.99 and has received very high praise from critics, suggesting it may be worth the price.
+    
+    Here's a breakdown of what reviewers are saying:
+    
+    *   **Scores:** Critics awarded it scores of 95, 94, and 93 points.
+    *   **Value:** Reviewers rated its value as 4/5 and 5/5 stars, with one stating it "rivals top-shelf Burgundy at a fraction of the price" and is "worth every penny."
+    *   **Tasting Notes:** It's described as layered, complex, with stunning balance, featuring notes of toasted hazelnut, citrus curd, and wet stone. It's also noted for impeccable winemaking, being precise and powerful without being heavy.
+    *   **Aging Potential:** Recommended for drinking between 2023 and 2033.
+    *   **Availability:** It is currently available at 2 BC Liquor stores with 5 units in stock.
+
+
+
+================================================================================
+  SUMMARY TABLE
+================================================================================
+
+  Model                         Avg Time    Min    Max   Avg In  Avg Out  Errors
+  ------------------------------------------------------------------------------
+  gemini-3.5-flash                 6.71s   2.5s  10.0s       0       0       0
+  gemini-3.1-pro-preview          12.72s   4.9s  21.4s       0       0       0
+  gemini-3.1-flash-lite            2.79s   1.4s   3.7s       0       0       0
+  gemini-3-flash-preview           5.61s   3.2s   7.9s       0       0       0
+  gemini-2.5-pro                  13.56s   5.0s  24.2s       0       0       0
+  gemini-2.5-flash                 6.44s   1.5s  11.6s       0       0       0
+  gemini-2.5-flash-lite            1.96s   1.2s   3.2s       0       0       0
+
+
+  Per-Test Breakdown:
+  ------------------------------------------------------------------------------
+
+  ORCHESTRATOR:
+    gemini-3.5-flash             avg=3.85s  avg_out_tokens=0
+    gemini-3.1-pro-preview       avg=6.65s  avg_out_tokens=0
+    gemini-3.1-flash-lite        avg=1.80s  avg_out_tokens=0
+    gemini-3-flash-preview       avg=4.18s  avg_out_tokens=0
+    gemini-2.5-pro               avg=6.78s  avg_out_tokens=0
+    gemini-2.5-flash             avg=3.01s  avg_out_tokens=0
+    gemini-2.5-flash-lite        avg=1.56s  avg_out_tokens=0
+
+  REASONING (Wine Pairing):
+    gemini-3.5-flash             avg=9.05s  avg_out_tokens=0
+    gemini-3.1-pro-preview       avg=16.34s  avg_out_tokens=0
+    gemini-3.1-flash-lite        avg=3.69s  avg_out_tokens=0
+    gemini-3-flash-preview       avg=7.01s  avg_out_tokens=0
+    gemini-2.5-pro               avg=20.81s  avg_out_tokens=0
+    gemini-2.5-flash             avg=10.58s  avg_out_tokens=0
+    gemini-2.5-flash-lite        avg=2.25s  avg_out_tokens=0
+
+  SYNTHESIS:
+    gemini-3.5-flash             avg=8.18s  avg_out_tokens=0
+    gemini-3.1-pro-preview       avg=17.19s  avg_out_tokens=0
+    gemini-3.1-flash-lite        avg=3.21s  avg_out_tokens=0
+    gemini-3-flash-preview       avg=6.13s  avg_out_tokens=0
+    gemini-2.5-pro               avg=15.35s  avg_out_tokens=0
+    gemini-2.5-flash             avg=6.87s  avg_out_tokens=0
+    gemini-2.5-flash-lite        avg=2.20s  avg_out_tokens=0
+
+
+================================================================================
+  RAW STATS (JSON)
+================================================================================
+
+[
+  {
+    "test": "ORCHESTRATOR",
+    "query": 1,
+    "model": "gemini-3.5-flash",
+    "time_s": 2.53,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 258,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 1,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 4.94,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 233,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 1,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 1.54,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 250,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 1,
+    "model": "gemini-3-flash-preview",
+    "time_s": 4.19,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 202,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 1,
+    "model": "gemini-2.5-pro",
+    "time_s": 5.01,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 222,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 1,
+    "model": "gemini-2.5-flash",
+    "time_s": 3.85,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 256,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 1,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 1.24,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 207,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 2,
+    "model": "gemini-3.5-flash",
+    "time_s": 3.4,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 314,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 2,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 7.3,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 329,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 2,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 1.4,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 335,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 2,
+    "model": "gemini-3-flash-preview",
+    "time_s": 3.28,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 250,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 2,
+    "model": "gemini-2.5-pro",
+    "time_s": 8.38,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 356,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 2,
+    "model": "gemini-2.5-flash",
+    "time_s": 2.76,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 296,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 2,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 1.33,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 302,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 3,
+    "model": "gemini-3.5-flash",
+    "time_s": 6.96,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 403,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 3,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 7.46,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 426,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 3,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 2.6,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 332,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 3,
+    "model": "gemini-3-flash-preview",
+    "time_s": 3.24,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 363,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 3,
+    "model": "gemini-2.5-pro",
+    "time_s": 8.08,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 387,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 3,
+    "model": "gemini-2.5-flash",
+    "time_s": 3.9,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 500,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 3,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 1.58,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 338,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 4,
+    "model": "gemini-3.5-flash",
+    "time_s": 2.51,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 230,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 4,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 6.9,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 256,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 4,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 1.67,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 251,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 4,
+    "model": "gemini-3-flash-preview",
+    "time_s": 6.0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 207,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 4,
+    "model": "gemini-2.5-pro",
+    "time_s": 5.65,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 272,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 4,
+    "model": "gemini-2.5-flash",
+    "time_s": 1.53,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 251,
+    "error": null
+  },
+  {
+    "test": "ORCHESTRATOR",
+    "query": 4,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 2.08,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 245,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 1,
+    "model": "gemini-3.5-flash",
+    "time_s": 9.81,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1788,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 1,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 13.73,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1775,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 1,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 3.66,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1595,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 1,
+    "model": "gemini-3-flash-preview",
+    "time_s": 7.93,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1684,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 1,
+    "model": "gemini-2.5-pro",
+    "time_s": 18.36,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1417,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 1,
+    "model": "gemini-2.5-flash",
+    "time_s": 10.26,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1694,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 1,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 2.23,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1254,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 2,
+    "model": "gemini-3.5-flash",
+    "time_s": 8.25,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1700,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 2,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 19.52,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1781,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 2,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 3.73,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1717,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 2,
+    "model": "gemini-3-flash-preview",
+    "time_s": 6.3,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1696,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 2,
+    "model": "gemini-2.5-pro",
+    "time_s": 19.85,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1248,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 2,
+    "model": "gemini-2.5-flash",
+    "time_s": 11.55,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1822,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 2,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 2.45,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1357,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 3,
+    "model": "gemini-3.5-flash",
+    "time_s": 9.09,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1689,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 3,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 15.77,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1705,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 3,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 3.67,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1782,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 3,
+    "model": "gemini-3-flash-preview",
+    "time_s": 6.79,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1780,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 3,
+    "model": "gemini-2.5-pro",
+    "time_s": 24.21,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1332,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 3,
+    "model": "gemini-2.5-flash",
+    "time_s": 9.94,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1560,
+    "error": null
+  },
+  {
+    "test": "REASONING (Wine Pairing)",
+    "query": 3,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 2.08,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1315,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 1,
+    "model": "gemini-3.5-flash",
+    "time_s": 10.03,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1316,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 1,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 16.08,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1312,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 1,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 3.3,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1311,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 1,
+    "model": "gemini-3-flash-preview",
+    "time_s": 5.67,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1545,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 1,
+    "model": "gemini-2.5-pro",
+    "time_s": 16.62,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1246,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 1,
+    "model": "gemini-2.5-flash",
+    "time_s": 8.26,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1213,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 1,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 1.57,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 795,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 2,
+    "model": "gemini-3.5-flash",
+    "time_s": 8.19,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 2062,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 2,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 21.4,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1927,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 2,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 2.93,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1808,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 2,
+    "model": "gemini-3-flash-preview",
+    "time_s": 7.18,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 2094,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 2,
+    "model": "gemini-2.5-pro",
+    "time_s": 21.15,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1791,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 2,
+    "model": "gemini-2.5-flash",
+    "time_s": 7.94,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1987,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 2,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 3.24,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1454,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 3,
+    "model": "gemini-3.5-flash",
+    "time_s": 6.31,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1555,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 3,
+    "model": "gemini-3.1-pro-preview",
+    "time_s": 14.09,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1268,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 3,
+    "model": "gemini-3.1-flash-lite",
+    "time_s": 3.39,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1521,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 3,
+    "model": "gemini-3-flash-preview",
+    "time_s": 5.55,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1582,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 3,
+    "model": "gemini-2.5-pro",
+    "time_s": 8.28,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1368,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 3,
+    "model": "gemini-2.5-flash",
+    "time_s": 4.4,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 1306,
+    "error": null
+  },
+  {
+    "test": "SYNTHESIS",
+    "query": 3,
+    "model": "gemini-2.5-flash-lite",
+    "time_s": 1.8,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "response_len": 863,
+    "error": null
+  }
+]
+
+  Finished: 2026-05-24 05:14:27
+================================================================================
