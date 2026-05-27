@@ -311,7 +311,7 @@ def _compact_wine_record(rec: dict) -> dict:
       go in a separate "Reference price" note, NEVER in the Where-to-buy table
     """
     all_prices = rec.get("prices") or []
-    retail = [p for p in all_prices if not p.get("is_reference")][:6]
+    retail = [p for p in all_prices if not p.get("is_reference")][:10]
     refs = [p for p in all_prices if p.get("is_reference")][:3]
     critics = rec.get("critic_reviews") or []
     return {
@@ -325,7 +325,7 @@ def _compact_wine_record(rec: dict) -> dict:
         "best_price": rec.get("best_price"),
         "retail_prices": retail,
         "reference_prices": refs,
-        "critic_reviews": critics[:4],
+        "critic_reviews": critics[:6],
         "tasting_notes_consolidated": rec.get("tasting_notes_consolidated"),
     }
 
