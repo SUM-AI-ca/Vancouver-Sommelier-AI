@@ -1,0 +1,40 @@
+================================================================================
+  GEMINI MODEL COMPARISON -- BC Wine AI Agent
+  Models: gemini-3.5-flash, gemini-3.1-pro-preview, gemini-3.1-flash-lite, gemini-3-flash-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite
+  Started: 2026-05-24 05:16:26
+  Total API calls: 7 models x 10 queries = 70
+================================================================================
+
+================================================================================
+  TEST: ORCHESTRATOR
+================================================================================
+
+--- Query 1: What's the best wine to pair with grilled salmon? ---
+
+  [gemini-3.5-flash]  time=3.15s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["grilled salmon"],
+      "reasoning": "The user is asking for a wine pairing recommendation for grilled salmon, which maps directly to the wine_pairing tool."
+    }
+
+  [gemini-3.1-pro-preview]  time=5.00s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["grilled salmon"],
+      "reasoning": "The user is asking for a wine recommendation to pair with a specific food item (grilled salmon), which directly matches the wine_pairing tool."
+    }
+
+  [gemini-3.1-flash-lite]  time=1.50s  in=0 out=0
+  ----------------------------------------------------------------------
+    {
+      "intent": "pairing",
+      "tools_to_call": ["wine_pairing"],
+      "search_queries": ["best wine pairing for grilled salmon"],
+      "reasoning": "The user is asking for a food pairing recommendation, which is directly addressed by the wine_pairing tool."
+    }
+
