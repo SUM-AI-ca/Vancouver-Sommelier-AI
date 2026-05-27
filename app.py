@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent import get_graph
+from validation import validate_query
 
 load_dotenv()
 
@@ -152,6 +153,19 @@ def _extract_token_texts(chunk) -> list[str]:
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     async def event_stream():
+        # Pre-agent validation gate. Off-topic queries (weather, sports, code, etc.)
+        # short-circuit here with an in-language rejection so we don't pay for an
+        # orchestrator round + tools. Failures fall through to the agent — the
+        # orchestrator's Rule 13 is the backstop.
+        try:
+            verdict = await validate_query(req.message)
+        except Exception:
+            verdict = None
+        if verdict is not None and not verdict.is_valid:
+            yield sse({"type": "token", "text": verdict.rejection_message, "run_id": None})
+            yield sse({"type": "done"})
+            return
+
         graph = _get_graph()
         config = {
             "configurable": {"thread_id": req.thread_id},
