@@ -7,11 +7,17 @@ Run from the project root:
     python -m tests.quality_eval --id INV-001             # single query
     python -m tests.quality_eval --dry-run                # first 2 queries only
     python -m tests.quality_eval --skip-judge             # deterministic only
+    python -m tests.quality_eval --limit 5                # first N queries
+    python -m tests.quality_eval --list                   # print all queries, exit
+    python -m tests.quality_eval --skip-preflight         # skip credential checks
 
 Outputs to tests/results/<YYYYMMDD-HHMMSS>/:
     results.json          # full structured data
     summary.md            # Claude-readable summary with TL;DR
     transcripts/<id>.md   # per-query full transcript
+
+Ctrl-C is handled gracefully — partial results are written before exit so
+nothing is lost on a long run.
 
 The flow is:
   golden query → graph.ainvoke → capture state → deterministic metrics
@@ -49,6 +55,7 @@ from tests.golden_queries import GOLDEN_QUERIES, total_invocations  # noqa: E402
 from tests.judge import judge_response  # noqa: E402
 from tests.metrics import (  # noqa: E402
     collect_tool_results_text,
+    collect_wine_context_text,
     count_distinct_critics_cited,
     count_distinct_stores_cited,
     extract_final_response,
@@ -129,13 +136,19 @@ async def evaluate_turn(
 
     tool_call_records = extract_tool_call_records(scoped_state)
     tool_messages = extract_tool_messages(scoped_state)
+    # Build the supporting-text blob from BOTH the (post-compaction) ToolMessages
+    # AND wine_context — compaction projects each ToolMessage down to top-N rows,
+    # so facts the synthesizer drew from cumulative wine_context would otherwise
+    # be falsely flagged as unsupported.
     tool_results_blob = collect_tool_results_text(tool_messages)
+    wine_ctx_blob = collect_wine_context_text(full_state)
+    support_blob = tool_results_blob + "\n" + wine_ctx_blob
     final_response = extract_final_response(scoped_state)
 
     orch = tool_orchestration_metrics(tool_call_records, turn_expected)
     hallu = hallucination_check(
         final_response,
-        tool_results_blob,
+        support_blob,
         turn_expected.get("hallucination_check_fields", []) or [],
     )
     stores_n, stores_hit = count_distinct_stores_cited(final_response)
@@ -160,7 +173,11 @@ async def evaluate_turn(
 
     judge_scores: dict | None = None
     if not skip_judge:
-        tr_summary = summarize_tool_results(tool_messages, max_chars=6000)
+        tr_summary = summarize_tool_results(
+            tool_messages,
+            max_chars=6000,
+            wine_context=full_state.get("wine_context") if isinstance(full_state, dict) else None,
+        )
         judge_scores = await judge_response(
             user_query=turn_expected.get("query", ""),
             tool_results_summary=tr_summary,
@@ -680,35 +697,147 @@ def render_transcript_md(q: dict) -> str:
 # CLI
 # =====================================================================
 
-def _filter_queries(queries: list[dict], only: str | None, only_id: str | None, dry_run: bool) -> list[dict]:
+def _filter_queries(
+    queries: list[dict],
+    only: str | None,
+    only_id: str | None,
+    dry_run: bool,
+    limit: int | None,
+) -> list[dict]:
     if only_id:
         return [q for q in queries if q["id"] == only_id]
     if only:
         cats = {c.strip().upper() for c in only.split(",") if c.strip()}
         out = [q for q in queries if q["category"].upper() in cats]
-        return out
-    if dry_run:
-        return queries[:2]
-    return queries
+    elif dry_run:
+        out = queries[:2]
+    else:
+        out = list(queries)
+    if limit is not None and limit > 0:
+        out = out[:limit]
+    return out
+
+
+def _preflight_check() -> list[str]:
+    """Soft check for credentials / common setup issues. Returns a list of
+    human-readable warnings — empty list means everything looks fine. Never
+    blocks; the eval still runs and individual tools degrade per their own
+    error handling.
+    """
+    warnings: list[str] = []
+
+    # .env file presence
+    env_path = _PROJECT_ROOT / ".env"
+    if not env_path.exists():
+        warnings.append(
+            f".env file not found at {env_path}. "
+            "Auth-gated tools (WineAlign, Robert Parker, Tavily) will return 'unavailable'."
+        )
+
+    # Vertex AI / Gemini ADC
+    try:
+        import google.auth  # type: ignore
+        try:
+            google.auth.default()
+        except Exception as e:
+            warnings.append(
+                f"Vertex AI credentials not resolvable (`{type(e).__name__}: {e}`). "
+                "Run `gcloud auth application-default login` before kicking off the eval."
+            )
+    except ImportError:
+        warnings.append("google-auth not installed — cannot pre-check Vertex AI credentials.")
+
+    # Per-tool env keys (warn-only)
+    optional_keys = {
+        "WINEALIGN_EMAIL": "WineAlign critic reviews",
+        "TAVILY_API_KEY": "Tavily web fallback",
+        "ROBERT_PARKER_EMAIL": "Robert Parker reviews",
+    }
+    missing = [(k, v) for k, v in optional_keys.items() if not os.environ.get(k)]
+    if missing:
+        for k, label in missing:
+            warnings.append(f"{k} not set — {label} will be unavailable.")
+
+    # Gismondi DB
+    db_path = _PROJECT_ROOT / "data" / "wines.db"
+    if not db_path.exists():
+        warnings.append(
+            f"Gismondi DB not built at {db_path}. Run `python build_db.py` first."
+        )
+
+    return warnings
+
+
+def _print_query_list(queries: list[dict]) -> None:
+    by_cat: dict[str, list[dict]] = {}
+    for q in queries:
+        by_cat.setdefault(q["category"], []).append(q)
+    print(f"\nAvailable golden queries ({len(queries)} total, "
+          f"{sum(len(q.get('turns', [None])) for q in queries)} invocations):\n")
+    for cat in sorted(by_cat.keys()):
+        rows = by_cat[cat]
+        print(f"  [{cat}]  ({len(rows)} queries)")
+        for q in rows:
+            is_multi = "turns" in q
+            if is_multi:
+                first = q["turns"][0].get("query", "(no query)")
+                tag = f"  ({len(q['turns'])} turns)"
+            else:
+                first = q.get("query", "(no query)")
+                tag = ""
+            print(f"    {q['id']:<14} {first[:72]}{tag}")
+        print()
+
+
+def _format_eta(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    m, s = divmod(int(seconds), 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m"
 
 
 async def amain(args) -> int:
-    selected = _filter_queries(GOLDEN_QUERIES, args.only, args.id, args.dry_run)
+    if args.list:
+        _print_query_list(GOLDEN_QUERIES)
+        return 0
+
+    selected = _filter_queries(
+        GOLDEN_QUERIES, args.only, args.id, args.dry_run, args.limit,
+    )
     if not selected:
         print("No queries matched filter. Available IDs:", flush=True)
         for q in GOLDEN_QUERIES:
             print(f"  {q['id']}  ({q['category']})", flush=True)
         return 2
 
+    # Pre-flight credential / dep check (soft — warnings only, never blocks).
+    if not args.skip_preflight:
+        warns = _preflight_check()
+        if warns:
+            print("\n⚠  Pre-flight warnings (eval will still run, but some tools may degrade):", flush=True)
+            for w in warns:
+                print(f"   - {w}", flush=True)
+            print("", flush=True)
+
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = _PROJECT_ROOT / "tests" / "results" / timestamp
     (out_dir / "transcripts").mkdir(parents=True, exist_ok=True)
 
+    n_invocations = sum(len(q.get("turns", [None])) for q in selected)
+    # Rough ETA: ~50s avg per invocation (with judge), ~30s without.
+    eta_per = 50.0 if not args.skip_judge else 30.0
+    est_total = n_invocations * eta_per
+
     print("=" * 78, flush=True)
     print(f"BC Wine AI Quality Eval", flush=True)
-    print(f"Output dir: {out_dir}", flush=True)
-    print(f"Selected: {len(selected)} queries  ({sum(len(q.get('turns', [None])) for q in selected)} invocations)", flush=True)
-    print(f"Skip judge: {args.skip_judge}", flush=True)
+    print(f"Output dir:    {out_dir}", flush=True)
+    print(f"Selected:      {len(selected)} queries ({n_invocations} invocations)", flush=True)
+    print(f"Skip judge:    {args.skip_judge}", flush=True)
+    print(f"Estimated:     ~{_format_eta(est_total)} "
+          f"(at ~{eta_per:.0f}s/invocation; varies by tool latency)", flush=True)
     print("=" * 78, flush=True)
 
     graph = get_graph()
@@ -716,11 +845,24 @@ async def amain(args) -> int:
     started_at = datetime.now(timezone.utc)
     t0 = time.time()
 
-    results = []
+    results: list[dict] = []
+    interrupted = False
     for i, entry in enumerate(selected, 1):
-        prefix = f"[{i:>2}/{len(selected)}] "
+        # Live ETA based on running average of completed queries.
+        elapsed = time.time() - t0
+        if i > 1 and results:
+            avg = elapsed / (i - 1)
+            remaining = avg * (len(selected) - i + 1)
+            eta_str = f"  ETA ~{_format_eta(remaining)}"
+        else:
+            eta_str = ""
+        prefix = f"[{i:>2}/{len(selected)}{eta_str}] "
         try:
             r = await run_query(graph, entry, args.skip_judge, console_prefix=prefix)
+        except KeyboardInterrupt:
+            interrupted = True
+            print(f"\n⚠  Interrupted on {entry['id']} — saving partial results…", flush=True)
+            break
         except Exception as e:
             print(f"{prefix}FATAL on {entry['id']}: {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()
@@ -762,8 +904,16 @@ async def amain(args) -> int:
         "model": os.environ.get("BC_WINE_MODEL", "gemini-3.5-flash"),
         "judge_model": "gemini-3.5-flash (temp=0)",
         "n_selected": len(selected),
+        "n_completed": len(results),
         "n_total_in_suite": len(GOLDEN_QUERIES),
-        "filters": {"only": args.only, "id": args.id, "dry_run": args.dry_run, "skip_judge": args.skip_judge},
+        "interrupted": interrupted,
+        "filters": {
+            "only": args.only,
+            "id": args.id,
+            "dry_run": args.dry_run,
+            "limit": args.limit,
+            "skip_judge": args.skip_judge,
+        },
     }
     agg = aggregate(results)
 
@@ -782,21 +932,44 @@ async def amain(args) -> int:
 
     print("", flush=True)
     print("=" * 78, flush=True)
-    print(f"Done in {duration:.1f}s ({duration/60:.1f} min).", flush=True)
+    status = "Interrupted — partial results written" if interrupted else "Done"
+    print(f"{status} in {duration:.1f}s ({duration/60:.1f} min). "
+          f"Completed {len(results)}/{len(selected)} queries.", flush=True)
     print(f"Results: {out_dir / 'results.json'}", flush=True)
     print(f"Summary: {out_dir / 'summary.md'}", flush=True)
     print("=" * 78, flush=True)
-    return 0
+    return 130 if interrupted else 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="BC Wine AI quality eval runner")
+    parser = argparse.ArgumentParser(
+        description="BC Wine AI quality eval runner",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python -m tests.quality_eval --list                  # see all queries\n"
+            "  python -m tests.quality_eval --id INV-001            # one query\n"
+            "  python -m tests.quality_eval --only INV,CRI          # category filter\n"
+            "  python -m tests.quality_eval --dry-run --skip-judge  # quickest sanity\n"
+            "  python -m tests.quality_eval --limit 5               # first 5 queries\n"
+            "  python -m tests.quality_eval                         # full suite (~25 min)\n"
+        ),
+    )
     parser.add_argument("--only", help="Comma-separated category codes (e.g. INV,CRI)", default=None)
     parser.add_argument("--id", help="Run a single golden-query id (e.g. INV-001)", default=None)
     parser.add_argument("--dry-run", action="store_true", help="Run only the first 2 queries")
-    parser.add_argument("--skip-judge", action="store_true", help="Skip LLM-as-judge calls (deterministic metrics only)")
+    parser.add_argument("--limit", type=int, default=None, help="Run only the first N queries after other filters")
+    parser.add_argument("--list", action="store_true", help="Print all available queries (grouped by category) and exit")
+    parser.add_argument("--skip-judge", action="store_true", help="Skip LLM-as-judge calls (deterministic metrics only — much faster)")
+    parser.add_argument("--skip-preflight", action="store_true", help="Skip the env/credential pre-flight check")
     args = parser.parse_args()
-    return asyncio.run(amain(args))
+    try:
+        return asyncio.run(amain(args))
+    except KeyboardInterrupt:
+        # Shouldn't reach here normally — amain catches per-query interrupts
+        # and writes partial results. This is a last-resort fallback.
+        print("\n⚠  Interrupted before any results were written.", flush=True)
+        return 130
 
 
 if __name__ == "__main__":
