@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from langgraph.types import Command
 from pydantic import BaseModel
 
 from agent import get_graph
@@ -153,26 +154,41 @@ def _extract_token_texts(chunk) -> list[str]:
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     async def event_stream():
-        # Pre-agent validation gate. Off-topic queries (weather, sports, code, etc.)
-        # short-circuit here with an in-language rejection so we don't pay for an
-        # orchestrator round + tools. Failures fall through to the agent — the
-        # orchestrator's Rule 13 is the backstop.
-        try:
-            verdict = await validate_query(req.message)
-        except Exception:
-            verdict = None
-        if verdict is not None and not verdict.is_valid:
-            yield sse({"type": "token", "text": verdict.rejection_message, "run_id": None})
-            yield sse({"type": "done"})
-            return
-
         graph = _get_graph()
         config = {
             "configurable": {"thread_id": req.thread_id},
             "tags": ["bc-wine-agent"],
             "metadata": {"thread_id": req.thread_id},
         }
-        inputs = {"messages": [("user", req.message)]}
+
+        # If a previous turn paused on ask_user_clarification_tool, this thread
+        # has a pending interrupt. The user's message is the clarification reply,
+        # so resume the graph with Command(resume=...) instead of starting a new
+        # turn. Validation is skipped on resume — short replies like "$50" or
+        # "the cheaper one" could trip the validator but are valid in-context.
+        is_resume = False
+        try:
+            snapshot = await graph.aget_state(config)
+            if snapshot and getattr(snapshot, "interrupts", None):
+                is_resume = True
+        except Exception:
+            snapshot = None
+
+        if not is_resume:
+            # Pre-agent validation gate. Off-topic queries (weather, sports, code, etc.)
+            # short-circuit here with an in-language rejection so we don't pay for an
+            # orchestrator round + tools. Failures fall through to the agent — the
+            # orchestrator's Rule 13 is the backstop.
+            try:
+                verdict = await validate_query(req.message)
+            except Exception:
+                verdict = None
+            if verdict is not None and not verdict.is_valid:
+                yield sse({"type": "token", "text": verdict.rejection_message, "run_id": None})
+                yield sse({"type": "done"})
+                return
+
+        inputs = Command(resume=req.message) if is_resume else {"messages": [("user", req.message)]}
 
         # The graph streams two LLM responses per turn for on-topic queries:
         # the orchestrator's draft and format_response's synthesis. We only
@@ -229,6 +245,26 @@ async def chat(req: ChatRequest):
                             fallback_buffer = []
                             fallback_run_id = run_id
                         fallback_buffer.extend(texts)
+
+            # If the orchestrator paused on ask_user_clarification_tool, the
+            # graph stops at an interrupt. Surface the question to the frontend
+            # so the user can reply (the next /api/chat hit will resume).
+            try:
+                post_snapshot = await graph.aget_state(config)
+            except Exception:
+                post_snapshot = None
+            pending = getattr(post_snapshot, "interrupts", None) if post_snapshot else None
+            if pending:
+                payload = pending[0].value if hasattr(pending[0], "value") else pending[0]
+                if not isinstance(payload, dict):
+                    payload = {"question": str(payload), "options": []}
+                yield sse({
+                    "type": "clarification_request",
+                    "question": payload.get("question", ""),
+                    "options": payload.get("options") or [],
+                })
+                yield sse({"type": "done"})
+                return
 
             # If the synthesis never ran (off-topic query → format_response
             # early-returned), flush the last orchestrator response so the

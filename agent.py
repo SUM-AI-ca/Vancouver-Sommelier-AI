@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.types import interrupt
 
 from bcliquor_tool import search_bcliquor
 from compaction import compact_tool_results_node
@@ -146,6 +147,45 @@ async def reasoning_pair_wine_tool(dish: str) -> str:
 
 
 @tool
+async def ask_user_clarification_tool(
+    question: str,
+    options: list[str] | None = None,
+) -> str:
+    """Ask the user a clarifying question when the request or available data is genuinely ambiguous.
+
+    Use ONLY when:
+    - The user query has multiple plausible interpretations that would yield very different answers
+      (e.g. "good wine" with no budget/style/occasion hint).
+    - Tool results have several closely-matched wines and the user's preference would break the tie.
+    - Essential information is missing (food pairing request with no dish; "the second one" with no
+      prior context in wine_context).
+
+    Do NOT use when:
+    - A reasonable default answer exists from user_preferences or wine_context.
+    - The query is vague but answerable (e.g. "recommend a red" — just pick 2-3 BC reds across styles).
+    - You are stalling instead of making a judgment call.
+
+    Args:
+        question: The clarifying question, written in the SAME language as the user. One sentence.
+        options: 2-4 short option strings the user can click. Leave empty for free-form replies.
+
+    Returns the user's clarification reply as a string. The user may type free text instead of
+    choosing one of the options.
+    """
+    user_reply = interrupt({
+        "type": "clarification_request",
+        "question": question,
+        "options": options or [],
+    })
+    return json.dumps({
+        "status": "ok",
+        "tool": "ask_user_clarification",
+        "question": question,
+        "user_reply": str(user_reply),
+    })
+
+
+@tool
 async def update_preferences_tool(
     budget_max: float | None = None,
     add_varietals: list[str] | None = None,
@@ -180,7 +220,10 @@ TOOLS = [
     search_tavily_tool,
     reasoning_pair_wine_tool,
     update_preferences_tool,
+    ask_user_clarification_tool,
 ]
+
+MAX_CLARIFICATIONS_PER_TURN = 3
 
 SAFE_TOOLS = [safe_tool(t) for t in TOOLS]
 
@@ -206,6 +249,14 @@ async def orchestrator_node(state: AgentState) -> dict:
     if last_recs:
         system_parts.append(f"\n\n## Last Recommendations (ordered)\n{json.dumps(last_recs)}")
 
+    if _count_clarifications_this_turn(state["messages"]) >= MAX_CLARIFICATIONS_PER_TURN:
+        system_parts.append(
+            "\n\n## Clarification cap reached\n"
+            f"You have already asked {MAX_CLARIFICATIONS_PER_TURN} clarifying questions this turn. "
+            "Do NOT call ask_user_clarification_tool again. Proceed with the best answer you can "
+            "give from the user's replies, wine_context, and user_preferences."
+        )
+
     system_msg = SystemMessage(content="\n".join(system_parts))
     messages = [system_msg] + state["messages"]
 
@@ -220,14 +271,35 @@ def _count_tool_rounds_this_turn(messages: list) -> int:
     """Count AIMessage tool-call rounds since the most recent HumanMessage.
 
     Each AIMessage with .tool_calls counts as one round (the AIMessage may emit
-    multiple parallel tool_calls, but it is one orchestrator decision)."""
+    multiple parallel tool_calls, but it is one orchestrator decision).
+
+    Rounds that ONLY call ask_user_clarification_tool are excluded — clarifications
+    are not data-gathering rounds and shouldn't push the orchestrator toward the
+    MAX_TOOL_ROUNDS safety stop."""
     rounds = 0
     for msg in reversed(messages):
         if isinstance(msg, HumanMessage):
             break
         if isinstance(msg, AIMessage) and msg.tool_calls:
+            names = {tc.get("name") for tc in msg.tool_calls}
+            if names == {"ask_user_clarification_tool"}:
+                continue
             rounds += 1
     return rounds
+
+
+def _count_clarifications_this_turn(messages: list) -> int:
+    """Count completed clarifications since the most recent HumanMessage.
+
+    A clarification is a ToolMessage produced by ask_user_clarification_tool.
+    Used to enforce MAX_CLARIFICATIONS_PER_TURN."""
+    count = 0
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            break
+        if isinstance(msg, ToolMessage) and getattr(msg, "name", "") == "ask_user_clarification_tool":
+            count += 1
+    return count
 
 
 def should_continue(state: AgentState) -> str:

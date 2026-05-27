@@ -11,6 +11,7 @@ const TOOL_LABELS = {
   search_robert_parker_tool: "Robert Parker ratings",
   reasoning_pair_wine_tool: "Sommelier reasoning",
   update_preferences_tool: "Saving preferences",
+  ask_user_clarification_tool: "Asking for clarification",
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -189,6 +190,44 @@ function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+function renderClarification(question, options) {
+  const container = document.createElement("div");
+  container.className = "chat-message ai clarification active";
+
+  const q = document.createElement("div");
+  q.className = "clarification-question";
+  q.textContent = question;
+  container.appendChild(q);
+
+  if (Array.isArray(options) && options.length > 0) {
+    const opts = document.createElement("div");
+    opts.className = "clarification-options";
+    for (const opt of options) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "clarification-option-btn";
+      btn.textContent = opt;
+      btn.addEventListener("click", () => {
+        if (sending) return;
+        inputEl.value = opt;
+        sendMessage();
+      });
+      opts.appendChild(btn);
+    }
+    container.appendChild(opts);
+  }
+
+  const hint = document.createElement("div");
+  hint.className = "clarification-hint";
+  hint.textContent = options && options.length > 0
+    ? "Pick one or type your own answer below."
+    : "Type your answer below.";
+  container.appendChild(hint);
+
+  messagesEl.appendChild(container);
+  scrollToBottom();
+}
+
 /* ── Send message via SSE ────────────────────────── */
 
 async function sendMessage() {
@@ -240,6 +279,10 @@ async function sendMessage() {
 
         switch (event.type) {
           case "tool_start": {
+            // ask_user_clarification_tool pauses on an interrupt — its tool_end
+            // doesn't fire until the user replies. Skip the badge so the
+            // dedicated clarification UI is the only signal.
+            if (event.tool === "ask_user_clarification_tool") break;
             addToolBadge(event.tool, event.run_id);
             activeTools += 1;
             const label = TOOL_LABELS[event.tool] || event.tool;
@@ -248,6 +291,7 @@ async function sendMessage() {
           }
 
           case "tool_end":
+            if (event.tool === "ask_user_clarification_tool") break;
             completeToolBadge(event.tool, event.run_id, event.summary, event.count);
             activeTools = Math.max(0, activeTools - 1);
             if (activeTools === 0) setStatus("Processing", true);
@@ -269,6 +313,17 @@ async function sendMessage() {
             tokenBuf += event.text;
             aiDiv.innerHTML = renderMarkdown(tokenBuf);
             scrollToBottom();
+            break;
+
+          case "clarification_request":
+            // Disable any in-flight prior clarification chips so only the
+            // most recent question is actionable.
+            messagesEl.querySelectorAll(".clarification.active").forEach((el) => {
+              el.classList.remove("active");
+              el.querySelectorAll(".clarification-option-btn").forEach((b) => (b.disabled = true));
+            });
+            renderClarification(event.question, event.options || []);
+            setStatus("Waiting for your reply", false);
             break;
 
           case "done":
