@@ -2,7 +2,13 @@
 
 BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으로 여러 와인 사이트의 데이터를 통합해서 사용자 질문에 답변하는 게 최종 목표.
 
-현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + 와인 컬러 풀스크린 채팅 UI 동작 중. Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중 (8회 iteration, 현재 Tool orchestration 100% / Hallucination 8.9% / Judge overall 3.4–3.9).**
+현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + 와인 컬러 풀스크린 채팅 UI 동작 중. Pre-agent query validation gate 추가 (off-topic 쿼리는 그래프 우회). Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중 (8회 iteration, 현재 Tool orchestration 100% / Hallucination 8.9% / Judge overall 3.4–3.9).**
+
+### Query Validation Gate (신규)
+
+`/api/chat`이 그래프를 호출하기 **전에** 한 번의 Gemini Flash 분류 호출로 쿼리가 에이전트 범위(와인 / 페어링 / 인사) 안에 있는지 판정한다. Off-topic이면 (날씨, 스포츠, 코딩 질문 등) 그래프를 건너뛰고 **사용자 입력 언어 그대로** 짧은 거절 메시지를 SSE 토큰으로 흘려보낸다. 한국어 질문엔 한국어, 영어 질문엔 영어로 자동 응답. 검증 LLM이 실패하면 fail-open으로 기존 에이전트 경로로 그대로 진입 — 오케스트레이터의 Rule 13이 백스톱 역할. 실측 오프토픽 응답 시간 ~2.6s (기존 ~10s+).
+
+구현: [`validation.py`](validation.py) (Pydantic `ValidationResult` + `validate_query()`), [`prompts.py`](prompts.py)의 `VALIDATION_SYSTEM_PROMPT`, [`app.py:154`](app.py) 게이트 삽입.
 
 ### 최근 UI/UX 개편
 
@@ -27,6 +33,11 @@ HTML/CSS/JS 프론트엔드 (static/ — SUMAI 디자인 채팅 모달)
     ↓
 FastAPI 백엔드 (app.py — SSE 스트리밍)
     ↓
+Validation Gate (validation.py — Gemini Flash 분류)
+    │
+    ├─ INVALID → 사용자 언어로 거절 → 그래프 우회 → 종료
+    │
+    └─ VALID ↓
 LangGraph Agent (agent.py — Gemini 3.5 Flash, 10개 tool)
     ↓
 ┌─────────────────────────────────────────────────────┐
@@ -186,10 +197,11 @@ results, answer = await search_tavily("best food pairings for BC Pinot Noir")
 ```
 BC-wine-ai-agents/
 ├── agent.py                    # LangGraph 그래프 빌더 (ReAct + 10 tools)
-├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, 세션 관리)
+├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, 세션 관리, validation 게이트)
+├── validation.py               # Pre-agent query 검증 (off-topic 쿼리 그래프 우회)
 ├── state.py                    # AgentState TypedDict + 관련 스키마
 ├── models.py                   # Gemini 3.5 Flash LLM 팩토리
-├── prompts.py                  # 오케스트레이터/페어링/합성 시스템 프롬프트
+├── prompts.py                  # 오케스트레이터/페어링/합성/검증 시스템 프롬프트
 ├── safety.py                   # safe_tool 데코레이터 (에러 래핑)
 ├── merge.py                    # 와인 이름 정규화 + 매장 간 중복 제거
 ├── winealign_tool.py           # WineAlign 검색

@@ -95,6 +95,18 @@ The interface meets all of them at their level — the same chat surface answers
                        │  - /api/session         │
                        │  - static/* (assets)    │
                        └──────────────┬──────────┘
+                                      │
+                                      ▼
+                       ┌─────────────────────────┐
+                       │  Validation Gate         │
+                       │  validation.py           │
+                       │  (Gemini Flash, temp=0)  │
+                       │  Pydantic-structured     │
+                       │  ──────────────────────  │
+                       │  INVALID → in-language   │
+                       │  rejection → SSE → END   │
+                       └──────────────┬──────────┘
+                                      │ VALID
                                       │ astream_events()
                                       ▼
                        ┌─────────────────────────┐
@@ -1050,16 +1062,16 @@ This log is used for (a) diagnostics, (b) the LLM-as-judge evaluation (§16), an
 
 ## 11. Language Convention
 
-**English-only** for now.
+**English-only** for the agent path. **Auto-detect** for the validation rejection path.
 
-- All prompts (orchestrator, sub-LLM, synthesis) are written in English.
+- All prompts (orchestrator, sub-LLM, synthesis) are written in English; agent responses are English.
 - All tool inputs and outputs are English.
 - The frontend UI strings are English.
-- No language detection logic is shipped.
+- **Exception:** the validation gate (§12.6) generates its rejection in the **same language as the user's input**, handled inside the validator's LLM call (the `VALIDATION_SYSTEM_PROMPT` carries both Korean and English example rejections). This is the only place where non-English output is produced today.
 
 Wine-specific tokens (winery names, varietals, region names) are kept in their original Latin/French/German spelling regardless — this is universal practice and not language-dependent.
 
-Korean language support is **deferred** as a future improvement. See §18 for the design sketch.
+Korean language support inside the agent path itself is **deferred** as a future improvement. See §18 for the design sketch.
 
 ---
 
@@ -1186,6 +1198,73 @@ const TOOL_LABELS = {
 ### 12.5 Session Management
 
 The frontend, on first load, calls `POST /api/session` to receive a `thread_id` and persists it in `localStorage` under the key `bc_wine_thread_id`. Every subsequent `/api/chat` POST includes that ID. This is the LangGraph checkpointer key — multi-turn memory works automatically.
+
+### 12.6 Pre-Agent Validation Gate
+
+Before the FastAPI handler invokes `graph.astream_events`, it runs the user message through a one-shot LLM classifier that decides whether the query is in scope for the agent. Off-topic queries (weather, sports, code, generic trivia) short-circuit at the API boundary — they never enter the graph, never spend an orchestrator round, never trigger tool calls. In-scope queries fall through to the existing pipeline unchanged.
+
+**File:** `validation.py`. One async function, one Pydantic model:
+
+```python
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
+
+from models import get_llm
+from prompts import VALIDATION_SYSTEM_PROMPT
+
+
+class ValidationResult(BaseModel):
+    is_valid: bool = Field(description="True if the query is in scope for the BC Wine agent.")
+    rejection_message: str = Field(default="", description="Polite redirect in the user's language; empty when is_valid=True.")
+
+
+async def validate_query(message: str) -> ValidationResult:
+    llm = get_llm(temperature=0.0).with_structured_output(ValidationResult)
+    return await llm.ainvoke([
+        SystemMessage(content=VALIDATION_SYSTEM_PROMPT),
+        HumanMessage(content=message),
+    ])
+```
+
+**Integration in `app.py`** — at the very top of `event_stream()` inside the `/api/chat` handler:
+
+```python
+try:
+    verdict = await validate_query(req.message)
+except Exception:
+    verdict = None   # fail-open
+
+if verdict is not None and not verdict.is_valid:
+    yield sse({"type": "token", "text": verdict.rejection_message, "run_id": None})
+    yield sse({"type": "done"})
+    return
+# else: fall through to graph.astream_events()
+```
+
+**Scope** (encoded in `VALIDATION_SYSTEM_PROMPT`):
+
+| Verdict | Examples |
+|---|---|
+| **VALID** | Wine questions (any region/varietal/producer), food–wine pairings, wine education, prices/availability, greetings ("hi", "안녕하세요"), system-help ("what can you do"), **short follow-ups** ("the second one", "cheaper one") |
+| **INVALID** | Weather, sports, news, jokes, coding/math/politics, non-wine alcoholic beverages on their own, general trivia |
+
+**Leniency rule:** the prompt biases the classifier toward VALID on ambiguous follow-ups so multi-turn reference resolution (§9.3) isn't broken by a stale current-message-only view.
+
+**Output language:** the same call also generates the rejection message in the **same language as the user's input**, with explicit Korean / English / coding-question examples in the prompt. There is no separate language-detection step.
+
+**Fail-open behavior:** if the validator LLM raises (timeout, quota, transient Vertex AI error), the handler proceeds to the graph as if validation never ran. Behavioral Rule 13 in `ORCHESTRATOR_SYSTEM_PROMPT` (§6.4) remains a defense-in-depth backstop for off-topic queries that slip through.
+
+**Observed latency:**
+
+| Path | End-to-end wall time |
+|---|---|
+| INVALID (gate short-circuit) | ~2.6 s |
+| VALID, greeting only (no tools) | ~10 s |
+| VALID, full inventory fan-out | ~50 s |
+
+Validation adds roughly 500–1000 ms upfront on the valid path; the saving on the invalid path is the entire orchestrator + synthesis cost (~8–15 s).
+
+**No frontend change.** The rejection rides the existing SSE `token` + `done` channel as a single chunk — `app.js` renders it identically to a streamed agent response.
 
 ---
 
@@ -1392,7 +1471,8 @@ Build order (each item assumes the prior items are done):
 | 8 | `app.py` | ✅ Done | FastAPI: SSE chat endpoint, session management, static mount | 0.75 day |
 | 9 | `static/index.html` + `static/styles.css` + `static/app.js` | ✅ Done | Frontend chat UI in SUM AI design language | 1.5 days |
 | 10 | `tests/golden_queries.py` + `tests/test_agent.py` | ☐ | 12+ golden queries, assertions, LLM-as-judge | 1 day |
-| 11 | `docs/DEPLOYMENT.md` | ☐ | Deploy notes (Docker, env vars, hosting target) | 0.5 day |
+| 11 | `validation.py` | ✅ Done | Pre-agent query validation gate (off-topic → SSE rejection, skip graph). See §12.6. | 0.25 day |
+| 12 | `docs/DEPLOYMENT.md` | ☐ | Deploy notes (Docker, env vars, hosting target) | 0.5 day |
 
 ### 15.1 Critical Path
 
@@ -1610,7 +1690,7 @@ Not needed if the frontend is served from the same origin as the API. The deploy
 
 **Architectural (surfaced by quality-eval iteration — see §16.5):**
 
-- **Query-type routing.** All queries currently flow through the same `orchestrator → tools → merge → format_response` path. A cheap 1 s classifier could route off-topic queries to a direct-response path (bypass synthesis, ~3 s round-trip), specific-wine queries to a smaller tool fan-out, and recommendation queries to the full path. Latency, cost, and quality all benefit.
+- **Query-type routing.** _Partially shipped (off-topic split):_ the pre-agent validation gate (§12.6) now intercepts off-topic queries at the API boundary and returns an in-language rejection in ~2.6 s without entering the graph. Still open: routing **specific-wine** queries to a narrower tool fan-out and **recommendation** queries to the full path. Both still go through the same orchestrator path today.
 - **Deterministic Where-to-buy rendering.** The synthesizer occasionally invents store rows ("Retail Database", placeholder URLs) or omits valid prices. Render the Where-to-buy table from `wine_context["prices"]` in Python; let the LLM only write the narrative sections (Lead / Why / Pairing). Hallucination in the most user-visible piece of data drops to zero.
 - **Stricter merge fuzzy matching.** `_find_match` currently requires `prod_slug` to be equal — when one source has `producer = "Tantalus Vineyards"` and another has the producer embedded in the wine title (`"Tantalus Riesling"`, producer slug empty), the two records do not merge and the user sees critic-only and store-only rows for the same wine. Treat empty `prod_slug` as a wildcard, or fuzzy-match producer slugs.
 - **BC Liquor `is_bc_vqa` parsing.** Certain BC Liquor results (observed on `"Quails Gate"`) return a value for `is_bc_vqa` that fails Pydantic boolean validation, dropping the entire result set. Coerce to `bool` with a tolerant parser inside `bcliquor_tool.py`.
@@ -1638,9 +1718,10 @@ BC-wine-ai-agents/
 ├── ✅ agent.py                    # build_graph()
 ├── ✅ state.py                    # AgentState TypedDict
 ├── ✅ models.py                   # LLM factory (Gemini 3.5 Flash)
-├── ✅ prompts.py                  # All prompts
+├── ✅ prompts.py                  # All prompts (orch + pairing + synthesis + validation)
 ├── ✅ merge.py                    # Normalize + dedup logic
 ├── ✅ safety.py                   # safe_tool decorator
+├── ✅ validation.py               # Pre-agent query validation gate (§12.6)
 ├── ✅ app.py                      # FastAPI entry point
 ├── ✅ bcliquor_tool.py
 ├── ✅ winealign_tool.py
