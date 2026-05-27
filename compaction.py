@@ -9,18 +9,29 @@ it reads `wine_context`, never ToolMessage content directly.
 Tools whose output is consumed by the synthesizer's aux-collector
 (`search_tavily`, `reasoning_pair_wine`) or by the preferences harvest
 (`update_preferences`) are passed through unchanged.
+
+A lenient LLM relevance filter (Gemini Flash) runs on the merged batch to drop
+obvious fuzzy-keyword mismatches (e.g., Marquis returning "Montes Alpha" for a
+"Monte Creek" query). Fail-open on any error — recall is preferred over
+precision so the synthesizer can still see borderline matches.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from typing import Any
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from merge import _select_best_price, merge_tool_results, normalize
+from models import get_llm
+from prompts import RELEVANCE_FILTER_PROMPT
 from state import AgentState, MergedWineRecord
+
+log = logging.getLogger("bc-wine-agent.compaction")
 
 
 MAX_COMPACT_TOP_N = 10
@@ -223,13 +234,124 @@ def _harvest_preferences(batch: list[ToolMessage], prefs: dict) -> None:
             prefs["style"] = data["style"]
 
 
-def compact_tool_results_node(state: AgentState) -> dict[str, Any]:
+RELEVANCE_LLM_TIMEOUT_S = 8.0
+RELEVANCE_MIN_BATCH = 3  # below this, skip the LLM call — single result is rarely noise
+
+
+def _extract_text(content: Any) -> str:
+    """Flatten Gemini's list-of-parts content into plain text. Mirrors agent._extract_text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts)
+    return str(content)
+
+
+def _strip_json_fence(raw: str) -> str:
+    """LLMs sometimes wrap JSON in ```json ... ``` fences."""
+    s = raw.strip()
+    if s.startswith("```"):
+        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
+        if s.endswith("```"):
+            s = s[:-3]
+    if s.startswith("json"):
+        s = s[4:].lstrip()
+    return s.strip()
+
+
+async def _llm_relevance_filter(
+    user_query: str, keys_and_names: list[tuple[str, str]]
+) -> set[str]:
+    """Ask Gemini Flash which keys are CLEARLY UNRELATED to the user query.
+    Returns the set of keys to DROP. Fail-open on any error → empty set."""
+    if not user_query or not keys_and_names:
+        return set()
+    if len(keys_and_names) < RELEVANCE_MIN_BATCH:
+        return set()
+    try:
+        listing = "\n".join(
+            f"{i}. {name[:160]}" for i, (_, name) in enumerate(keys_and_names)
+        )
+        body = (
+            f"User query: {user_query}\n\n"
+            f"Wines ({len(keys_and_names)}):\n{listing}\n\n"
+            "Respond with JSON only."
+        )
+        llm = get_llm(temperature=0.0)
+        try:
+            resp = await asyncio.wait_for(
+                llm.ainvoke([
+                    SystemMessage(content=RELEVANCE_FILTER_PROMPT),
+                    HumanMessage(content=body),
+                ]),
+                timeout=RELEVANCE_LLM_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            log.warning("relevance filter timed out after %.1fs — passing batch through", RELEVANCE_LLM_TIMEOUT_S)
+            return set()
+
+        text = _strip_json_fence(_extract_text(resp.content))
+        if not text:
+            return set()
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            log.warning("relevance filter returned non-JSON: %r — passing batch through", text[:200])
+            return set()
+        idx_raw = data.get("drop_indices", []) if isinstance(data, dict) else []
+        if not isinstance(idx_raw, list):
+            return set()
+        drop_idx: set[int] = set()
+        for x in idx_raw:
+            try:
+                drop_idx.add(int(x))
+            except (TypeError, ValueError):
+                continue
+        # Safety: clamp at 80% — fuzzy-search noise can legitimately make up
+        # the majority of a batch (e.g., Marquis returning 6 unrelated wines
+        # for a "Monte Creek" query against 3 real ones). The prompt's "70%"
+        # soft guidance keeps the LLM conservative; this is the hard backstop
+        # for runaway hallucinations.
+        cap = int(0.8 * len(keys_and_names))
+        if len(drop_idx) > cap:
+            log.info("relevance filter wanted to drop %d/%d — exceeds 80%% cap, passing through",
+                     len(drop_idx), len(keys_and_names))
+            return set()
+        dropped_keys = {keys_and_names[i][0] for i in drop_idx if 0 <= i < len(keys_and_names)}
+        if dropped_keys:
+            dropped_names = [keys_and_names[i][1][:60] for i in drop_idx if 0 <= i < len(keys_and_names)]
+            log.info("relevance filter dropped %d/%d for query=%r: %s",
+                     len(dropped_keys), len(keys_and_names), user_query[:80], dropped_names)
+        return dropped_keys
+    except Exception as e:  # pragma: no cover — fail-open defensive guard
+        log.warning("relevance filter error %s: %s — passing batch through", type(e).__name__, e)
+        return set()
+
+
+def _latest_human_query(messages: list) -> str:
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            return content
+    return ""
+
+
+async def compact_tool_results_node(state: AgentState) -> dict[str, Any]:
     """Between `tools` and the loop-back to `orchestrator`:
 
     1. Identify this round's batch of ToolMessages (since last AIMessage).
     2. Smart-merge raw results into state["wine_context"] (synthesis facts).
-    3. Harvest update_preferences calls.
-    4. Replace each compactable ToolMessage with a compact projection — same id
+    3. LLM relevance filter — drop entries clearly unrelated to the user query.
+    4. Harvest update_preferences calls.
+    5. Replace each compactable ToolMessage with a compact projection — same id
        so the LangGraph `add_messages` reducer replaces in place.
     """
     msgs = state["messages"]
@@ -245,6 +367,14 @@ def compact_tool_results_node(state: AgentState) -> dict[str, Any]:
         return {}
 
     incremental = merge_tool_results(batch)
+
+    user_query = _latest_human_query(msgs)
+    if user_query and incremental:
+        keys_and_names = [(k, rec.get("display_name", "")) for k, rec in incremental.items()]
+        dropped = await _llm_relevance_filter(user_query, keys_and_names)
+        if dropped:
+            incremental = {k: v for k, v in incremental.items() if k not in dropped}
+
     wine_ctx: dict[str, MergedWineRecord] = dict(state.get("wine_context") or {})
     _merge_into_context(wine_ctx, incremental)
 

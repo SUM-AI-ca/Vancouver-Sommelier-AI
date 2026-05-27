@@ -217,6 +217,25 @@ stores, URLs — all must appear in the data. Never invent or recall from memory
 6. **Keep responses under ~500 words. No filler.**
 """
 
+RELEVANCE_FILTER_PROMPT = """\
+Filter wine search results for a BC wine assistant. Given a user query and a \
+numbered list of wine names, return the zero-based indices of entries that are \
+CLEARLY the wrong producer / region (fuzzy-keyword mismatches).
+
+Drop when: the user named a specific producer/winery and the entry is from a \
+different producer that just shares a keyword. Example: query "Monte Creek" → \
+drop "Montes Alpha" (Chilean), "Hester Creek" (different BC producer), \
+"Mount Eden" (California).
+
+Keep when: ambiguous, plausibly related, or the query is by varietal / food / \
+region / price / generic ("Pinot Noir", "BC red", "steak pairing", "추천", \
+"the second one", "tell me more"). Keep all vintages of the same producer.
+
+If more than ~70% would be dropped, return `[]` (too strict — let it through).
+
+Respond with JSON only: `{"drop_indices": [int, ...]}`
+"""
+
 VALIDATION_SYSTEM_PROMPT = """\
 You are a query gatekeeper for a **BC Wine AI Agent**. Decide whether the user's \
 message belongs to this agent's scope.
