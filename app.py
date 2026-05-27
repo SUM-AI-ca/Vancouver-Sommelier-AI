@@ -1,6 +1,8 @@
 """FastAPI backend — SSE chat endpoint, session management, static file serving."""
 
 import json
+import logging
+import os
 import uuid
 
 from dotenv import load_dotenv
@@ -13,7 +15,31 @@ from pydantic import BaseModel
 from agent import get_graph
 from validation import validate_query
 
+# .env must load BEFORE langchain/langgraph reads tracing env vars at import-time
+# downstream. agent.py is already imported above, but its tracing decisions defer
+# to env-var lookups at call-time (via langsmith.utils.tracing_is_enabled), so
+# loading here is still effective.
 load_dotenv()
+
+log = logging.getLogger("bc-wine-agent")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
+
+def _log_langsmith_status() -> None:
+    """Log whether LangSmith tracing is wired up so misconfig is caught at boot."""
+    tracing = (os.getenv("LANGSMITH_TRACING") or os.getenv("LANGCHAIN_TRACING_V2") or "").lower() == "true"
+    api_key = os.getenv("LANGSMITH_API_KEY") or os.getenv("LANGCHAIN_API_KEY") or ""
+    project = os.getenv("LANGSMITH_PROJECT") or os.getenv("LANGCHAIN_PROJECT") or "default"
+    endpoint = os.getenv("LANGSMITH_ENDPOINT") or os.getenv("LANGCHAIN_ENDPOINT") or "https://api.smith.langchain.com"
+    if tracing and api_key:
+        log.info("LangSmith tracing ENABLED — project=%s endpoint=%s", project, endpoint)
+    elif tracing and not api_key:
+        log.warning("LangSmith tracing flag is set but no API key — traces will NOT be sent")
+    else:
+        log.info("LangSmith tracing disabled (set LANGSMITH_TRACING=true + LANGSMITH_API_KEY to enable)")
+
+
+_log_langsmith_status()
 
 app = FastAPI(title="BC Wine AI Agent")
 
@@ -157,8 +183,15 @@ async def chat(req: ChatRequest):
         graph = _get_graph()
         config = {
             "configurable": {"thread_id": req.thread_id},
-            "tags": ["bc-wine-agent"],
-            "metadata": {"thread_id": req.thread_id},
+            "tags": ["bc-wine-agent", "chat"],
+            "metadata": {
+                "thread_id": req.thread_id,
+                # Truncated user message so the LangSmith trace list is scannable
+                # without leaking long inputs into metadata indexing.
+                "user_message_preview": req.message[:120],
+                "message_length": len(req.message),
+            },
+            "run_name": f"chat: {req.message[:60]}",
         }
 
         # If a previous turn paused on ask_user_clarification_tool, this thread
