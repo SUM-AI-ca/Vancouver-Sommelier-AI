@@ -23,7 +23,7 @@ from merge import _select_best_price, merge_tool_results, normalize
 from state import AgentState, MergedWineRecord
 
 
-MAX_COMPACT_TOP_N = 5
+MAX_COMPACT_TOP_N = 10
 
 _COMPACTABLE_STORE_TOOLS = {
     "search_bcliquor",

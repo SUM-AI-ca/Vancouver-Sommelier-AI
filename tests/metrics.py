@@ -77,6 +77,22 @@ def collect_tool_results_text(tool_messages: list[ToolMessage]) -> str:
     return "\n".join(parts).lower()
 
 
+def collect_wine_context_text(state: dict) -> str:
+    """Flatten state['wine_context'] into a searchable, lowercased blob.
+
+    Necessary because `compact_tool_results_node` projects each ToolMessage down
+    to top-N rows — so facts that survive only in `wine_context` (full merged
+    record set: tasting notes, consumer ratings, all prices/critic reviews,
+    URLs across all stores, etc.) would otherwise be invisible to
+    `hallucination_check`, producing false positives on facts the synthesizer
+    legitimately drew from cumulative state.
+    """
+    ctx = state.get("wine_context") if isinstance(state, dict) else None
+    if not isinstance(ctx, dict):
+        return ""
+    return json.dumps(ctx, default=str, ensure_ascii=False).lower()
+
+
 # =====================================================================
 # Tool orchestration metrics
 # =====================================================================
@@ -480,8 +496,18 @@ def mention_check(
 # Tool result summary for the judge / transcript
 # =====================================================================
 
-def summarize_tool_results(tool_messages: list[ToolMessage], max_chars: int = 8000) -> str:
-    """Compact summary of tool results for the judge prompt + transcript files."""
+def summarize_tool_results(
+    tool_messages: list[ToolMessage],
+    max_chars: int = 8000,
+    wine_context: dict | None = None,
+) -> str:
+    """Compact summary of tool results for the judge prompt + transcript files.
+
+    After in-loop compaction the ToolMessage blobs are projections (top_results
+    with name/price/score/url only). The full merged record set lives in
+    `wine_context`. Surface a compact view of both so the judge can verify
+    citations against the same data the synthesizer saw.
+    """
     chunks = []
     used = 0
     for tm in tool_messages:
@@ -489,18 +515,40 @@ def summarize_tool_results(tool_messages: list[ToolMessage], max_chars: int = 80
         raw = to_text(tm.content)
         try:
             parsed = json.loads(raw)
-            n_results = len(parsed.get("results", []) or [])
+            results_field = parsed.get("results", []) or []
+            top_results = parsed.get("top_results", []) or []
+            n_results = len(top_results) if parsed.get("compacted") else len(results_field)
             status = parsed.get("status", "?")
+            compacted_marker = "  [compacted]" if parsed.get("compacted") else ""
             preview = json.dumps(parsed, indent=2, default=str)[:1500]
         except (json.JSONDecodeError, TypeError):
             n_results = -1
             status = "?"
+            compacted_marker = ""
             preview = raw[:1500]
-        header = f"### {name}  (status={status}, n_results={n_results})"
+        header = f"### {name}  (status={status}, n_results={n_results}){compacted_marker}"
         block = f"{header}\n{preview}"
         if used + len(block) > max_chars:
             chunks.append("\n[... tool results truncated ...]")
             break
         chunks.append(block)
         used += len(block)
+
+    if isinstance(wine_context, dict) and wine_context:
+        keys = list(wine_context.keys())[:12]
+        ctx_view = {}
+        for k in keys:
+            rec = wine_context[k]
+            if not isinstance(rec, dict):
+                continue
+            ctx_view[k] = {
+                "display_name": rec.get("display_name"),
+                "best_price": rec.get("best_price"),
+                "n_prices": len(rec.get("prices") or []),
+                "n_critic_reviews": len(rec.get("critic_reviews") or []),
+                "is_bc_vqa": rec.get("is_bc_vqa"),
+            }
+        ctx_blob = json.dumps(ctx_view, indent=2, default=str, ensure_ascii=False)[:2000]
+        chunks.append(f"### wine_context (cumulative merged; top {len(ctx_view)} entries)\n{ctx_blob}")
+
     return "\n\n".join(chunks)
