@@ -2,7 +2,19 @@
 
 BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으로 여러 와인 사이트의 데이터를 통합해서 사용자 질문에 답변하는 게 최종 목표.
 
-현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + 와인 컬러 풀스크린 채팅 UI 동작 중. Pre-agent query validation gate 추가 (off-topic 쿼리는 그래프 우회). Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중 (8회 iteration, 현재 Tool orchestration 100% / Hallucination 8.9% / Judge overall 3.4–3.9).**
+현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + 와인 컬러 풀스크린 채팅 UI 동작 중. Pre-agent query validation gate 추가 (off-topic 쿼리는 그래프 우회). Tool result compaction node 추가 (라운드 사이 context bloat 해결). Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중 (8회 iteration, 현재 Tool orchestration 100% / Hallucination 8.9% / Judge overall 3.4–3.9).**
+
+### Tool Result Compaction Node (신규)
+
+ReAct loop이 `tools → orchestrator`로 돌아갈 때, 각 라운드의 raw tool JSON (store당 24+ rows × 20+ fields)이 그대로 `state["messages"]`에 쌓이면서 다음 라운드 오케스트레이터가 그걸 전부 다시 attend함. 이걸 해결하려고 `tools`와 `orchestrator` 사이에 결정론적(LLM 없음) compaction 노드를 끼움.
+
+각 batch에 대해:
+1. Raw 결과를 **즉시** `wine_context`에 incremental merge — synthesis가 쓸 facts를 loop 내부에서 미리 채움.
+2. 각 compactable ToolMessage를 **같은 id로** 작은 projection (`top_results`: top-5, key field만)으로 교체 → langgraph `add_messages` reducer가 in-place replace. 다음 라운드 orchestrator context가 ~10× 감소.
+3. `results: []`을 compact payload에 박아둬서 최종 `merge_results_node`의 재호출은 자동 no-op.
+4. Tavily / reasoning_pair_wine / update_preferences는 pass-through (synthesis aux collector, prefs harvest에서 raw가 필요).
+
+구현: [`compaction.py`](compaction.py) (`compact_tool_results_node` + projection 헬퍼), [`agent.py`](agent.py)에 노드 + 엣지 추가. 그래프 흐름은 이제 `orchestrator → tools → compact_tool_results → orchestrator (loop)`.
 
 ### Query Validation Gate (신규)
 
@@ -39,6 +51,10 @@ Validation Gate (validation.py — Gemini Flash 분류)
     │
     └─ VALID ↓
 LangGraph Agent (agent.py — Gemini 3.5 Flash, 10개 tool)
+    │
+    │   orchestrator → tools → compact_tool_results → orchestrator (loop)
+    │                                                       ↓ (no tool_calls)
+    │   merge_results → format_response → END
     ↓
 ┌─────────────────────────────────────────────────────┐
 │  Tools (데이터 수집 — 모두 완성)                       │
@@ -199,6 +215,7 @@ BC-wine-ai-agents/
 ├── agent.py                    # LangGraph 그래프 빌더 (ReAct + 10 tools)
 ├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, 세션 관리, validation 게이트)
 ├── validation.py               # Pre-agent query 검증 (off-topic 쿼리 그래프 우회)
+├── compaction.py               # Tool result compaction 노드 (라운드 사이 context 축소 + incremental wine_context merge)
 ├── state.py                    # AgentState TypedDict + 관련 스키마
 ├── models.py                   # Gemini 3.5 Flash LLM 팩토리
 ├── prompts.py                  # 오케스트레이터/페어링/합성/검증 시스템 프롬프트

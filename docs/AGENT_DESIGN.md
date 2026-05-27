@@ -140,11 +140,27 @@ The interface meets all of them at their level — the same chat surface answers
                                       │ (tool results in messages)
                                       ▼
                        ┌─────────────────────────┐
+                       │  compact_tool_results    │
+                       │  Pure Python, no LLM     │
+                       │  - incremental merge     │
+                       │    into wine_context     │
+                       │  - replace ToolMessages  │
+                       │    with top-5 projection │
+                       │    (same id → reducer    │
+                       │     replaces in place)   │
+                       │  - pass-through Tavily / │
+                       │    pair_wine / prefs     │
+                       └──────────────┬──────────┘
+                                      │ (loop back to orchestrator
+                                      │  for next ReAct round)
+                                      ▼
+                       ┌─────────────────────────┐
                        │  merge_results (Node)    │
                        │  Pure Python, no LLM     │
-                       │  - normalize names       │
-                       │  - dedup across stores   │
-                       │  - aggregate prices      │
+                       │  - final pass (mostly    │
+                       │    no-op on compact msgs)│
+                       │  - update last_recs from │
+                       │    wine_context tail     │
                        └──────────────┬──────────┘
                                       ▼
                        ┌─────────────────────────┐
@@ -498,7 +514,8 @@ class AgentState(TypedDict):
 |---|---|---|---|
 | `orchestrator` | Custom Python wrapping `ChatGoogleGenerativeAI.bind_tools(TOOLS)` | Intent classification, tool selection, post-tool reasoning. Temperature 0.2. Receives user prefs + cached wine_context as system context. | Yes — Gemini 3.5 Flash |
 | `tools` | `tool_node_with_logging` wrapping `ToolNode` | Dispatches `tool_calls` to wrapped tool functions, then appends each call to `tool_call_log` for downstream auditing | No |
-| `merge_results` | Custom Python | Walks `state["messages"]`, parses `ToolMessage` JSON, normalizes wine names, dedups across stores, aggregates into `wine_context`. Also harvests `update_preferences` calls. | No |
+| `compact_tool_results` | Custom Python (`compaction.py`) | Runs after every `tools` round. (1) Identifies this batch of ToolMessages (since last AIMessage). (2) Incrementally merges raw results into `wine_context` via `merge_tool_results` + `_merge_into_context`. (3) Harvests `update_preferences` payloads. (4) Replaces each compactable ToolMessage with a same-id projection (top-5 rows, key fields only, `results: []`). The `add_messages` reducer replaces in place, so the **next orchestrator round sees ~10× less raw JSON**. Pass-through: `search_tavily`, `reasoning_pair_wine`, `update_preferences`. See §8.9. | No |
+| `merge_results` | Custom Python | Walks `state["messages"]`, parses `ToolMessage` JSON, normalizes wine names, dedups across stores, aggregates into `wine_context`. Also harvests `update_preferences` calls. With compaction active, this becomes a defensive final pass: most ToolMessages now carry `results: []` and are no-op'd; `wine_context` is already populated by `compact_tool_results`. Sets `last_recommendations` from `wine_context` tail (insertion order). | No |
 | `format_response` | Custom (single LLM call) | Synthesis pass. Takes user query + orchestrator draft + compact `wine_context` + supplementary tool outputs (pairing reasoning, Tavily answers) and emits the canonical markdown skeleton (§6.5). Replaces the orchestrator's last `AIMessage` in-place by reusing its `id` so streaming consumers see only the synthesized text. Temperature 0.0. Skipped for off-topic turns (empty `wine_context` AND empty aux outputs). | Yes — Gemini 3.5 Flash |
 
 #### Tool-rounds safety net
@@ -511,7 +528,8 @@ class AgentState(TypedDict):
 START
   └→ orchestrator
        ├→ tools  (if tool_calls present AND tool rounds < MAX_TOOL_ROUNDS)
-       │    └→ orchestrator  (ReAct self-loop)
+       │    └→ compact_tool_results
+       │         └→ orchestrator  (ReAct self-loop — now over compact messages)
        └→ merge_results  (when orchestrator emits AIMessage with no tool_calls,
                           OR when MAX_TOOL_ROUNDS is reached)
              └→ format_response
@@ -890,13 +908,60 @@ def merge_tool_results(messages: list[BaseMessage]) -> dict[str, MergedWine]:
     """
 ```
 
-Called from the `merge_results` node:
+Called from the `merge_results` node — and **also from `compact_tool_results_node`** (§8.9) on each individual tool batch, so `wine_context` is built incrementally during the ReAct loop rather than only at the end.
 
-```python
-def merge_results_node(state: AgentState) -> dict:
-    merged = merge_tool_results(state["messages"])
-    return {"wine_context": merged}
+### 8.9 In-Loop Compaction (`compaction.py`)
+
+A separate node, `compact_tool_results_node`, sits between `tools` and the loop-back to `orchestrator`. Two responsibilities:
+
+**(a) Incremental wine_context merge.** Calls `merge_tool_results` on just this round's `ToolMessage` batch and folds the result into `state["wine_context"]` via `_merge_into_context` — which extends `prices` / `critic_reviews` on duplicate `normalized_key` entries (instead of overwriting) and recomputes `best_price` after the extension. Synthesis facts are therefore ready the moment the loop exits; the final `merge_results_node` becomes a defensive no-op pass.
+
+**(b) ToolMessage compaction.** For each compactable ToolMessage, emits a replacement with the **same `id`** so the LangGraph `add_messages` reducer overwrites in place. The replacement content is a small projection:
+
+```json
+{
+  "status": "ok",
+  "tool": "search_bcliquor",
+  "compacted": true,
+  "result_count": 24,
+  "top_results": [
+    {"name": "...", "price": 34.99, "in_stock": true, "vintage": 2021}
+  ],
+  "results": []
+}
 ```
+
+Two invariants baked into the payload:
+
+1. `results: []` — so any future call to `merge_tool_results` over the message list (e.g. the final `merge_results_node`) iterates an empty array and produces no records, leaving the already-populated `wine_context` untouched.
+2. Top-N (default 5, constant `MAX_COMPACT_TOP_N`) carries only the fields the orchestrator needs to decide round-2 actions: name + price + in_stock + vintage for store tools; name + score + critic + vintage for critic tools. Tasting notes, URLs, descriptions, store counts are dropped from the orchestrator's view but remain in `wine_context` for synthesis.
+
+**Pass-through tools.** Three tools are NOT compacted because their raw payload is small *and* has downstream consumers that need it intact:
+
+| Tool | Why pass-through |
+|---|---|
+| `search_tavily` | `_collect_aux_tool_outputs` (agent.py) reads the `answer` field for synthesis context. |
+| `reasoning_pair_wine` | Same aux-collector path — synthesis surfaces the sommelier reasoning. |
+| `update_preferences` | `merge_results_node` parses these to populate `user_preferences`. (`compact_tool_results_node` also harvests them, so the final pass is idempotent.) |
+
+**Tool projections** (per `_project_store_row` / `_project_critic_row` in `compaction.py`):
+
+| Tool | Projection fields |
+|---|---|
+| `search_bcliquor`, `search_marquis`, `search_okanagan_cellars`, `search_everything_wine` | `name`, `price`, `in_stock`, `vintage` |
+| `search_winealign` | `wine_name`, top critic score, critic name, vintage |
+| `search_gismondi` | `title`, `score_100`/100, taster, vintage |
+| `search_robert_parker` | `display_name`, top reviewer rating, reviewer, vintage |
+
+**Why deterministic (no LLM) compaction.** Adding an LLM call between every tool round would (a) add ~1–2 s latency per round, (b) introduce a new failure surface inside the ReAct loop, and (c) risk lossy summaries that prevent the orchestrator from making accurate round-2 decisions. A fixed-shape Python projection avoids all three.
+
+**Stability invariants.** Verified end-to-end:
+
+- SSE `on_tool_end` event in `app.py` fires from the LangGraph tool node, **before** compaction runs. Frontend tool-badge dropdowns still show real tool output.
+- `_count_tool_rounds_this_turn` / `should_continue` count AIMessages, not ToolMessages — unaffected by content replacement.
+- `MAX_TOOL_ROUNDS=3` safety net — unaffected.
+- Off-topic / no-tool-call paths never enter the compaction node.
+- Multi-turn reference resolution: `merge_results_node` now derives `last_recommendations` from `list(wine_context.keys())[-10:]` (insertion order — newest at tail).
 
 ---
 
@@ -1472,7 +1537,8 @@ Build order (each item assumes the prior items are done):
 | 9 | `static/index.html` + `static/styles.css` + `static/app.js` | ✅ Done | Frontend chat UI in SUM AI design language | 1.5 days |
 | 10 | `tests/golden_queries.py` + `tests/test_agent.py` | ☐ | 12+ golden queries, assertions, LLM-as-judge | 1 day |
 | 11 | `validation.py` | ✅ Done | Pre-agent query validation gate (off-topic → SSE rejection, skip graph). See §12.6. | 0.25 day |
-| 12 | `docs/DEPLOYMENT.md` | ☐ | Deploy notes (Docker, env vars, hosting target) | 0.5 day |
+| 12 | `compaction.py` | ✅ Done | In-loop tool-result compaction node: incremental `wine_context` merge + same-id ToolMessage replacement. See §8.9. | 0.25 day |
+| 13 | `docs/DEPLOYMENT.md` | ☐ | Deploy notes (Docker, env vars, hosting target) | 0.5 day |
 
 ### 15.1 Critical Path
 
@@ -1692,7 +1758,7 @@ Not needed if the frontend is served from the same origin as the API. The deploy
 
 - **Query-type routing.** _Partially shipped (off-topic split):_ the pre-agent validation gate (§12.6) now intercepts off-topic queries at the API boundary and returns an in-language rejection in ~2.6 s without entering the graph. Still open: routing **specific-wine** queries to a narrower tool fan-out and **recommendation** queries to the full path. Both still go through the same orchestrator path today.
 - **Deterministic Where-to-buy rendering.** The synthesizer occasionally invents store rows ("Retail Database", placeholder URLs) or omits valid prices. Render the Where-to-buy table from `wine_context["prices"]` in Python; let the LLM only write the narrative sections (Lead / Why / Pairing). Hallucination in the most user-visible piece of data drops to zero.
-- **Stricter merge fuzzy matching.** `_find_match` currently requires `prod_slug` to be equal — when one source has `producer = "Tantalus Vineyards"` and another has the producer embedded in the wine title (`"Tantalus Riesling"`, producer slug empty), the two records do not merge and the user sees critic-only and store-only rows for the same wine. Treat empty `prod_slug` as a wildcard, or fuzzy-match producer slugs.
+- **Stricter merge fuzzy matching.** `_find_match` currently requires `prod_slug` to be equal — when one source has `producer = "Tantalus Vineyards"` and another has the producer embedded in the wine title (`"Tantalus Riesling"`, producer slug empty), the two records do not merge and the user sees critic-only and store-only rows for the same wine. Treat empty `prod_slug` as a wildcard, or fuzzy-match producer slugs. **Note:** the in-loop incremental merge (§8.9) makes this misalignment slightly more visible because Gismondi-derived prices (`prod_slug = "tantalus"`) and BC Liquor store rows (`prod_slug = ""`) for the same wine end up under separate keys in `wine_context` mid-loop.
 - **BC Liquor `is_bc_vqa` parsing.** Certain BC Liquor results (observed on `"Quails Gate"`) return a value for `is_bc_vqa` that fails Pydantic boolean validation, dropping the entire result set. Coerce to `bool` with a tolerant parser inside `bcliquor_tool.py`.
 - **WineAlign `value_rating` + `price` fields.** The merge currently keeps `value_rating` (0–5 stars) on `CriticReviewMerged` but the synthesis prompt never surfaces it. Either render it ("4 stars — great value") or drop it from the schema. WineAlign's listing prices, similarly, could feed `wine_context["prices"]` the same way Gismondi's now does (§8.6).
 - **Consumer rating / votes display.** `MergedWineRecord` carries `consumer_rating` and `consumer_votes` from BC Liquor but the synthesis prompt doesn't reference them. Adding a one-line "consumer score (n votes)" to the Why section provides cheap social proof.
@@ -1722,6 +1788,7 @@ BC-wine-ai-agents/
 ├── ✅ merge.py                    # Normalize + dedup logic
 ├── ✅ safety.py                   # safe_tool decorator
 ├── ✅ validation.py               # Pre-agent query validation gate (§12.6)
+├── ✅ compaction.py               # In-loop tool-result compaction node (§8.9)
 ├── ✅ app.py                      # FastAPI entry point
 ├── ✅ bcliquor_tool.py
 ├── ✅ winealign_tool.py

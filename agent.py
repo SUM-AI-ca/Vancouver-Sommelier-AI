@@ -10,6 +10,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from bcliquor_tool import search_bcliquor
+from compaction import compact_tool_results_node
 from everythingwine_tool import search_everything_wine
 from gismondi_tool import search_gismondi
 from marquis_tool import search_marquis
@@ -266,7 +267,11 @@ def merge_results_node(state: AgentState) -> dict:
     existing = state.get("wine_context", {})
     existing.update(merged)
 
-    last_recs = list(merged.keys())[:10]
+    # wine_context is now incrementally populated by compact_tool_results_node
+    # during the ReAct loop; `merged` here is empty for compacted ToolMessages
+    # (results=[]). Derive last_recommendations from wine_context's tail so
+    # reference resolution still has the freshest entries.
+    last_recs = list((existing or {}).keys())[-10:]
 
     prefs = state.get("user_preferences", {})
     for msg in state["messages"]:
@@ -471,6 +476,7 @@ def build_graph(checkpointer=None):
 
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("tools", tool_node_with_logging)
+    builder.add_node("compact_tool_results", compact_tool_results_node)
     builder.add_node("merge_results", merge_results_node)
     builder.add_node("format_response", format_response_node)
 
@@ -479,7 +485,11 @@ def build_graph(checkpointer=None):
         "tools": "tools",
         "merge_results": "merge_results",
     })
-    builder.add_edge("tools", "orchestrator")
+    # Between rounds: tools → compact → orchestrator. Compaction shrinks the
+    # ToolMessage payload the next orchestrator round attends over, while
+    # populating wine_context incrementally so synthesis has facts ready.
+    builder.add_edge("tools", "compact_tool_results")
+    builder.add_edge("compact_tool_results", "orchestrator")
     builder.add_edge("merge_results", "format_response")
     builder.add_edge("format_response", END)
 
