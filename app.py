@@ -211,7 +211,7 @@ async def chat(req: ChatRequest):
             # Pre-agent validation gate. Off-topic queries (weather, sports, code, etc.)
             # short-circuit here with an in-language rejection so we don't pay for an
             # orchestrator round + tools. Failures fall through to the agent — the
-            # orchestrator's Rule 13 is the backstop.
+            # orchestrator's Guideline G5 (off-topic redirect) is the backstop.
             try:
                 verdict = await validate_query(req.message)
             except Exception:
