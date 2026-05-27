@@ -75,31 +75,41 @@ def _project_store_row(r: dict) -> dict:
         in_stock = any(s.get("status") == "available" for s in r["stock"])
     else:
         in_stock = bool(r.get("in_stock"))
+    # URL field name varies across stores: bcliquor/okanagan use `product_url`,
+    # marquis/everythingwine use `url`. Coalesce. Keeping the real URL in the
+    # compact projection prevents the orchestrator from fabricating plausible-
+    # looking links in its draft (which synthesis was sometimes echoing).
+    url = r.get("product_url") or r.get("url") or r.get("wine_url")
     return {
         "name": str(name)[:160],
         "price": price,
         "in_stock": in_stock,
         "vintage": _vintage_of(name),
+        "url": url if isinstance(url, str) else None,
     }
 
 
 def _project_critic_row(r: dict, tool: str) -> dict:
+    url: str | None = None
     if tool == "search_winealign":
         name = r.get("wine_name") or ""
         reviews = r.get("critic_reviews") or []
         top = reviews[0] if reviews else {}
         score = top.get("score") or ""
         critic = top.get("critic_name") or ""
+        url = r.get("url") or r.get("wine_url")
     elif tool == "search_gismondi":
         name = r.get("title") or ""
         score = f"{r.get('score_100', '')}/100" if r.get("score_100") else ""
         critic = r.get("taster") or "Anthony Gismondi"
+        url = r.get("url")
     elif tool == "search_robert_parker":
         name = r.get("display_name") or ""
         notes = r.get("tasting_notes") or []
         top = notes[0] if notes else {}
         score = top.get("rating") or r.get("rating_display") or ""
         critic = top.get("reviewer") or r.get("last_reviewer") or "Robert Parker"
+        url = r.get("url")
     else:
         name = r.get("name") or r.get("title") or r.get("display_name") or ""
         score = ""
@@ -109,6 +119,7 @@ def _project_critic_row(r: dict, tool: str) -> dict:
         "score": str(score)[:32],
         "critic": str(critic)[:64],
         "vintage": _vintage_of(name),
+        "url": url if isinstance(url, str) else None,
     }
 
 
