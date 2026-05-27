@@ -214,7 +214,7 @@ stores, URLs — all must appear in the data. Never invent or recall from memory
    own Lead / Why / Where-to-buy block. Don't end with "we could not find anything" \
    if the data has any matching wine.
 
-6. **Keep responses under ~500 words. No filler.**
+6. **Keep responses under ~1300 words. No filler.**
 """
 
 RELEVANCE_FILTER_PROMPT = """\
@@ -283,7 +283,6 @@ scope. Ask me about a wine, a pairing, or where to find a bottle and I'll dig in
 
 ## Rules
 
-- Be **lenient** — when in doubt, mark VALID.
 - Never call any tool; just return the structured result.
 - Never answer the actual question when INVALID — only the polite redirect.
 """

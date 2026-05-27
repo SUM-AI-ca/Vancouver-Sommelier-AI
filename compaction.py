@@ -34,7 +34,7 @@ from state import AgentState, MergedWineRecord
 log = logging.getLogger("bc-wine-agent.compaction")
 
 
-MAX_COMPACT_TOP_N = 10
+MAX_COMPACT_TOP_N = 15
 
 _COMPACTABLE_STORE_TOOLS = {
     "search_bcliquor",
@@ -234,8 +234,8 @@ def _harvest_preferences(batch: list[ToolMessage], prefs: dict) -> None:
             prefs["style"] = data["style"]
 
 
-RELEVANCE_LLM_TIMEOUT_S = 8.0
-RELEVANCE_MIN_BATCH = 3  # below this, skip the LLM call — single result is rarely noise
+RELEVANCE_LLM_TIMEOUT_S = 20.0
+RELEVANCE_MIN_BATCH = 1 
 
 
 def _extract_text(content: Any) -> str:
@@ -315,16 +315,6 @@ async def _llm_relevance_filter(
                 drop_idx.add(int(x))
             except (TypeError, ValueError):
                 continue
-        # Safety: clamp at 80% — fuzzy-search noise can legitimately make up
-        # the majority of a batch (e.g., Marquis returning 6 unrelated wines
-        # for a "Monte Creek" query against 3 real ones). The prompt's "70%"
-        # soft guidance keeps the LLM conservative; this is the hard backstop
-        # for runaway hallucinations.
-        cap = int(0.8 * len(keys_and_names))
-        if len(drop_idx) > cap:
-            log.info("relevance filter wanted to drop %d/%d — exceeds 80%% cap, passing through",
-                     len(drop_idx), len(keys_and_names))
-            return set()
         dropped_keys = {keys_and_names[i][0] for i in drop_idx if 0 <= i < len(keys_and_names)}
         if dropped_keys:
             dropped_names = [keys_and_names[i][1][:60] for i in drop_idx if 0 <= i < len(keys_and_names)]
