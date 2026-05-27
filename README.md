@@ -310,11 +310,21 @@ ROBERT_PARKER_EMAIL=your_email@example.com
 ROBERT_PARKER_PASSWORD=your_password
 ROBERT_PARKER_API_KEY=7ZPWPBFIRE2JLR6JBV5SCZPW54ZZSGGY
 
-# LangSmith (optional — tracing)
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=ls__...
-LANGCHAIN_PROJECT=bc-wine-ai-agent
+# LangSmith (optional — tracing & observability)
+# Both LANGSMITH_* (current) and LANGCHAIN_* (legacy alias) are read; setting
+# both is safe. app.py logs whether tracing is enabled at boot.
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_sk_...
+LANGSMITH_PROJECT=bc-wine-agent
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 ```
+
+Traces로 보내는 메타데이터:
+- `tags`: `["bc-wine-agent", "chat"]`
+- `metadata`: `thread_id`, `user_message_preview` (120자), `message_length`
+- `run_name`: `chat: <user_message[:60]>` — LangSmith trace 목록에서 한 줄로 식별 가능
+
+대시보드: https://smith.langchain.com → 프로젝트 `bc-wine-agent` 에서 thread별·run별 step trace, latency, token usage, tool I/O 모두 확인.
 
 ### Gismondi DB 빌드 (최초 1회)
 
