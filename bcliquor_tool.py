@@ -7,7 +7,7 @@ No login required.
 
 import asyncio
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 # ── Config ──────────────────────────────────────────────────────────
@@ -53,6 +53,22 @@ class BCLiquorResult(BaseModel):
     image_url: str | None = None
     product_url: str | None = None
     certificates: list[str] = []
+
+    # BC Liquor's Elasticsearch payload sometimes returns explicit nulls for
+    # isBCVQA (observed on Fort Berens 2024 listings, broader Pinot Noir queries).
+    # dict.get(key, default) only falls back when the key is missing — an
+    # explicit null passes None through and trips Pydantic's strict bool check.
+    # Same for `certificates` returning null. Coerce both at validation time so
+    # construction sites stay simple.
+    @field_validator("is_bc_vqa", mode="before")
+    @classmethod
+    def _is_bc_vqa_null_to_false(cls, v):
+        return False if v is None else v
+
+    @field_validator("certificates", mode="before")
+    @classmethod
+    def _certificates_null_to_empty(cls, v):
+        return [] if v is None else v
 
 
 # ── Core Search ─────────────────────────────────────────────────────
