@@ -378,6 +378,12 @@ async def compact_tool_results_node(state: AgentState) -> dict[str, Any]:
             replacements.append(compact)
 
     out: dict[str, Any] = {"wine_context": wine_ctx}
+    # Derive last_recommendations here (formerly done by merge_results_node, now
+    # removed). The tail of wine_context — newest insertions — drives multi-turn
+    # reference resolution ("the second one", "tell me more"). Only set when we
+    # actually have context so a filtered-empty batch doesn't clear it.
+    if wine_ctx:
+        out["last_recommendations"] = list(wine_ctx.keys())[-10:]
     if replacements:
         out["messages"] = replacements
     if prefs:
