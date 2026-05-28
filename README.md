@@ -30,7 +30,7 @@ ReAct loop이 `tools → orchestrator`로 돌아갈 때, 각 라운드의 raw to
 
 규칙(`prompts.py` Guideline G6):
 - **묻는다**: 2+ 해석 가능한 모호 쿼리("좋은 와인 추천해줘"), 비슷한 점수의 매칭이 다수일 때 (preference로 tie-break), 필수 정보 누락 (페어링인데 음식 없음, "the second one"인데 prior context 없음).
-- **묻지 않는다**: user_preferences로 답이 나오는 경우, "2-3개 와인 추천" 같은 default가 자연스러운 경우, 정보성/교육성 질문.
+- **묻지 않는다**: user_preferences로 답이 나오는 경우, "약 5개 와인 추천" 같은 default가 자연스러운 경우, 정보성/교육성 질문.
 - **횟수 제한**: 한 turn에 최대 3회 (`MAX_CLARIFICATIONS_PER_TURN`). cap 도달 시 system prompt에 안내가 append되어 강제로 best-effort 답변.
 - **Round counting**: clarification-only round는 `MAX_TOOL_ROUNDS` 카운트에서 제외 — 데이터 수집 round와 분리.
 - **Validation skip on resume**: clarification 응답("$50 under" 같은 짧은 텍스트)이 validator를 트립하지 않도록 resume 분기에선 validation 게이트를 건너뜀.
@@ -109,12 +109,12 @@ LangGraph Agent (agent.py — Gemini 3.5 Flash, 11개 tool)
 
 ### 1. WineAlign (`winealign_tool.py`)
 
-캐나다 최대 와인 리뷰 플랫폼. **월 구독료를 내야** 전문가 리뷰를 볼 수 있다. JSON API를 따로 못 찾아서, 구독하고 내 계정으로 로그인한 뒤 웹페이지를 파싱하는 방식으로 만들었다.
+캐나다 최대 와인 리뷰 플랫폼. **월 구독료를 내야** 전문가 리뷰를 볼 수 있다. 검색 가능한 JSON API를 따로 못 찾아서, 구독하고 내 계정으로 로그인한 뒤 웹페이지를 파싱하는 방식으로 만들었다. (`/api/v1/wines`·`/api/v1/reviews` JSON 엔드포인트가 존재하긴 하지만 쿼리/필터가 안 먹히는 전체 덤프(firehose)라 검색·단일 와인 조회에는 못 쓴다.)
 
 - **인증**: `authenticity_token` + `person_credentials` 쿠키 기반 세션
 - **자동 재로그인**: 세션 만료되면 `/login` 리다이렉트 감지해서 자동으로 다시 로그인
 - **데이터**: 와인 이름, appellation, 점수, 가격, 전문가별 리뷰 (점수, 테이스팅 노트, value rating, drink window)
-- **주의**: 요청 사이에 0.5초 딜레이 넣어서 polite하게 동작
+- **속도**: 와인별 리뷰 detail 페이지를 동시(병렬, 최대 `REVIEW_CONCURRENCY`=6개)로 가져온다. 예전 순차 fetch + 요청당 0.5초 딜레이 방식이 이 툴의 병목이었는데, 병렬화로 ~10배 빨라졌다(30개 와인 기준 ~30초 → warm ~4.6초).
 
 ```python
 results = await search_winealign("pinot noir", max_pages=3, include_reviews=True)

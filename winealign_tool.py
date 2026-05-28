@@ -33,8 +33,10 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# Polite delay between requests (seconds)
-REQUEST_DELAY = 0.5
+# Max concurrent detail-page fetches. The detail pages (one per wine, for critic
+# reviews) are the tool's bottleneck; fetching them in parallel instead of serially
+# cuts review retrieval ~10x. Kept modest to stay polite to the host.
+REVIEW_CONCURRENCY = 6
 
 
 # ── Data Models ─────────────────────────────────────────────────────
@@ -284,6 +286,30 @@ def _clean_query(q: str) -> str:
     return q.replace("'", "").replace("’", "").replace("‘", "")
 
 
+async def _fetch_search_page(query: str, page: int) -> tuple[list[WineAlignResult], int]:
+    """Fetch and parse one search results page. Returns ([], 0) on non-200."""
+    resp = await _session._get(
+        f"{BASE_URL}/search",
+        params={"q": _clean_query(query), "page": page},
+    )
+    if resp.status_code != 200:
+        return [], 0
+    return _parse_search_page(resp.text)
+
+
+async def _attach_reviews(wine: WineAlignResult, sem: asyncio.Semaphore) -> None:
+    """Fetch a wine's detail page and parse its critic reviews in place."""
+    if not wine.url:
+        return
+    async with sem:
+        try:
+            detail_resp = await _session._get(wine.url)
+            if detail_resp.status_code == 200:
+                wine.critic_reviews = _parse_critic_reviews(detail_resp.text)
+        except Exception as e:
+            print(f"  [Warning] Failed to fetch reviews for {wine.wine_name}: {e}")
+
+
 async def search_winealign(
     query: str,
     max_pages: int = 3,
@@ -297,45 +323,24 @@ async def search_winealign(
         max_pages:       Max pages to fetch (10 results per page)
         include_reviews: If True, fetch each wine's detail page for critic reviews
     """
-    all_results: list[WineAlignResult] = []
-    total_count = 0
+    # Page 1 first — it carries total_count, which tells us how many more pages exist.
+    first_results, total_count = await _fetch_search_page(query, 1)
+    all_results: list[WineAlignResult] = list(first_results)
 
-    for page in range(1, max_pages + 1):
-        resp = await _session._get(
-            f"{BASE_URL}/search",
-            params={"q": _clean_query(query), "page": page},
-        )
+    if first_results and max_pages > 1 and total_count > len(all_results):
+        per_page = len(first_results)
+        last_page = min(max_pages, -(-total_count // per_page))  # ceil division
+        if last_page > 1:
+            pages = await asyncio.gather(
+                *[_fetch_search_page(query, p) for p in range(2, last_page + 1)]
+            )
+            for results, _ in pages:
+                all_results.extend(results)
 
-        if resp.status_code != 200:
-            break
-
-        results, total = _parse_search_page(resp.text)
-        if page == 1:
-            total_count = total
-
-        if not results:
-            break
-
-        all_results.extend(results)
-
-        # Stop if we've collected all results
-        if len(all_results) >= total_count:
-            break
-
-        await asyncio.sleep(REQUEST_DELAY)
-
-    # Fetch critic reviews for each wine
+    # Fetch critic reviews concurrently — this is the tool's main bottleneck.
     if include_reviews and all_results:
-        for wine in all_results:
-            if not wine.url:
-                continue
-            try:
-                detail_resp = await _session._get(wine.url)
-                if detail_resp.status_code == 200:
-                    wine.critic_reviews = _parse_critic_reviews(detail_resp.text)
-            except Exception as e:
-                print(f"  [Warning] Failed to fetch reviews for {wine.wine_name}: {e}")
-            await asyncio.sleep(REQUEST_DELAY)
+        sem = asyncio.Semaphore(REVIEW_CONCURRENCY)
+        await asyncio.gather(*[_attach_reviews(w, sem) for w in all_results])
 
     return all_results
 

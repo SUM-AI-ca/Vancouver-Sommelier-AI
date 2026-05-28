@@ -70,7 +70,7 @@ def _summarize_tool_output(output) -> list[dict]:
     """Extract a compact preview from a tool's JSON output so the frontend can
     render an expandable dropdown showing what the tool actually found.
 
-    Returns a list of up to 5 result rows, each shaped like:
+    Returns a list of result rows, each shaped like:
         {"title": "...", "subtitle": "...", "url": "..." | None}
 
     Tool outputs are JSON strings produced by the @tool wrappers — they look
@@ -94,7 +94,7 @@ def _summarize_tool_output(output) -> list[dict]:
     results = data.get("results") if isinstance(data.get("results"), list) else []
 
     rows: list[dict] = []
-    for r in results[:5]:
+    for r in results:
         if not isinstance(r, dict):
             continue
         # Each store / critic returns slightly different fields — coalesce.

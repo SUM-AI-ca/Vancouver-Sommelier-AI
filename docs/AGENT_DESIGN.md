@@ -201,7 +201,7 @@ Eight tools total — all implemented. Specifications below match the shipping c
 | # | Tool (file) | Source | Auth | Returns | Typical Latency | Primary Use |
 |---|---|---|---|---|---|---|
 | 1 | `bcliquor_tool.py` | BC Liquor Stores (gov't) | none | `list[BCLiquorResult]` | ~1 s | Inventory + consumer ratings + BC VQA flag |
-| 2 | `winealign_tool.py` | WineAlign critic reviews | required | `list[WineAlignResult]` | 3–10 s | Multi-critic professional reviews + drink windows |
+| 2 | `winealign_tool.py` | WineAlign critic reviews | required | `list[WineAlignResult]` | ~2–5 s | Multi-critic professional reviews + drink windows (review detail pages fetched in parallel) |
 | 3 | `everythingwine_tool.py` | Everything Wine (Vancouver) | none | `list[EverythingWineResult]` | ~2 s | Pickup/delivery availability |
 | 4 | `okanagan_cellars_tool.py` | Okanagan Cellars (Vancouver, 2 locations) | none | `list[OkanaganCellarsResult]` | ~1 s | Exact stock counts, large-format bottles |
 | 5 | `marquis_tool.py` | Marquis Wine Cellars (Vancouver, curated) | none | `tuple[list[MarquisResult], int]` | ~1 s | Curated picks, MSRP, hierarchical categories |
@@ -250,7 +250,7 @@ async def search_winealign(
 - User wants aging guidance.
 - User wants value-for-money analysis.
 
-**Notes:** Slow (3–10 s). Requires `WINEALIGN_EMAIL` / `WINEALIGN_PASSWORD` in `.env`. Auto-relogin on session expiry. Politeness delay: 0.5 s between requests. **Limit:** the orchestrator must not call this more than twice per turn.
+**Notes:** ~2–5 s. Requires `WINEALIGN_EMAIL` / `WINEALIGN_PASSWORD` in `.env`. Auto-relogin on session expiry. Per-wine critic-review detail pages are fetched **concurrently** (`asyncio.gather` + `Semaphore(REVIEW_CONCURRENCY=6)`); the earlier serial loop with a 0.5 s delay per wine was this tool's bottleneck, so it was removed (~10× faster — 30 wines went from ~30 s to a warm ~4.6 s). No searchable JSON API exists: `/api/v1/wines` and `/api/v1/reviews` return JSON but ignore all query/filter params (full-catalog firehose), and the per-wine detail show endpoint 406s — so HTML parsing stays. **Limit:** the orchestrator must not call this more than twice per turn.
 
 ---
 
@@ -588,7 +588,7 @@ When the user's query or the available data is genuinely ambiguous, the orchestr
 - Top tool results tie and a user preference would break the tie (e.g. 5 Chardonnays at similar scores from different producers).
 - Essential info is missing (food pairing with no dish; "the second one" with no prior context in `wine_context`).
 
-**Anti-triggers.** Don't ask when a reasonable default exists from `user_preferences` or `wine_context`, when "here are 2-3 picks across styles" is a fine answer, or for informational/educational queries. Don't stall by clarifying instead of answering.
+**Anti-triggers.** Don't ask when a reasonable default exists from `user_preferences` or `wine_context`, when "here are ~5 picks across styles" is a fine answer, or for informational/educational queries. Don't stall by clarifying instead of answering.
 
 **Round counting.** A round whose `tool_calls` are **all** `ask_user_clarification_tool` is excluded from `_count_tool_rounds_this_turn`, so clarifications don't push the orchestrator toward the `MAX_TOOL_ROUNDS = 3` data-tool safety stop. A separate counter `_count_clarifications_this_turn` enforces `MAX_CLARIFICATIONS_PER_TURN = 3`. When the cap is reached, `orchestrator_node` appends a "clarification cap reached — proceed with best-effort answer" line to the system prompt so the model stops asking and synthesizes a response.
 
@@ -711,7 +711,7 @@ A leading **Response Language** directive precedes both tiers: respond in the us
 | **G3** | **Multi-turn state.** Resolve "the second one" / "the cheaper one" / "tell me more" against `last_recommendations` and `wine_context`. Don't re-recommend a wine the user already saw without acknowledging it. |
 | **G4** | **Calibrate depth to audience.** Beginner vocabulary → friendly, jargon-light. Sommelier vocabulary → full critic detail. |
 | **G5** | **Off-topic queries** (weather, sports, jokes): 1–2 sentence answer from built-in knowledge, redirect to wine, no tools. Backstop when the pre-agent validation gate (§12.6) fail-opens. |
-| **G6** | **Ask before guessing.** Call `ask_user_clarification_tool` when the query has 2+ plausible interpretations, top results tie and a user preference would break it, or essential info (dish, prior context) is missing. Do NOT ask when `user_preferences` already answers it, when "2–3 picks across styles" is fine, or to stall instead of committing. See §4.6 for full mechanism; cap is in C3. |
+| **G6** | **Ask before guessing.** Call `ask_user_clarification_tool` when the query has 2+ plausible interpretations, top results tie and a user preference would break it, or essential info (dish, prior context) is missing. Do NOT ask when `user_preferences` already answers it, when "~5 picks across styles" is fine, or to stall instead of committing. See §4.6 for full mechanism; cap is in C3. |
 
 **What was removed (vs. the prior 15-rule list):**
 - Duplicate "Never invent" entries (Rule 2 + Rule 15) → collapsed into C1.
@@ -754,8 +754,8 @@ The synthesizer follows these structural rules:
 - **Treat the orchestrator's draft as the intent signal** — which wines to feature, which `wine_context` entries are fuzzy-search noise. The synthesizer reformats, it does not re-select.
 - **One row per store, all stores that carry each wine.** Do not collapse to `best_price` only — users compare across retailers.
 - **OMIT the "Where to buy" section entirely** for a featured wine if it has zero store rows in the data. Do not invent placeholders like "Retail Database / - / No current local retail listings" — empty placeholder tables are worse than no table.
-- **Specific-wine query, no exact match in data** → say "We could not find this exact wine at the BC retailers we checked", then recommend 1–2 close alternatives from the **same varietal and region**. Never silently swap in unrelated wines (e.g., a French Bordeaux when the user asked about a BC Syrah).
-- **Recommendation query** (pairing, "under $X", "best for Y") → the wine data IS the answer pool. Pick 2–3 wines from it; never end such a query with "we could not find anything" if any matching wine exists.
+- **Specific-wine query, no exact match in data** → say "We could not find this exact wine at the BC retailers we checked" and stop there. Do **not** recommend alternatives — for a specifically named wine, a list of substitutes is noise, not an answer.
+- **Recommendation query** (pairing, "under $X", "best for Y") → the wine data IS the answer pool. Pick **about 5** wines from it (4–6 is fine; fewer only when the data genuinely has fewer matches); never end such a query with "we could not find anything" if any matching wine exists.
 - **Critic scores require an exact bottling match.** A review of "Painted Rock Syrah Cabernet Sauvignon 2021" does not back a claim about "Painted Rock Syrah 2021" — they are different wines. Say "no critic reviews available for this specific bottling" rather than borrow scores from the adjacent bottling.
 
 The frontend renders this markdown into HTML before showing it to the user (see §13).
