@@ -15,10 +15,9 @@ from compaction import compact_tool_results_node
 from everythingwine_tool import search_everything_wine
 from gismondi_tool import search_gismondi
 from marquis_tool import search_marquis
-from merge import merge_tool_results
 from models import get_llm
 from okanagan_cellars_tool import search_okanagan_cellars
-from prompts import ORCHESTRATOR_SYSTEM_PROMPT, PAIRING_SYSTEM_PROMPT, SYNTHESIS_SYSTEM_PROMPT
+from prompts import ORCHESTRATOR_SYSTEM_PROMPT, PAIRING_SYSTEM_PROMPT
 from robert_parker_tool import search_robert_parker
 from safety import safe_tool
 from state import AgentState, UserPreferences
@@ -231,7 +230,14 @@ SAFE_TOOLS = [safe_tool(t) for t in TOOLS]
 # ── Graph nodes ──────────────────────────────────────────────────
 
 async def orchestrator_node(state: AgentState) -> dict:
-    llm = get_llm(temperature=0.2).bind_tools(TOOLS)
+    # Once the data-tool round budget is spent, bind NO tools so the model must
+    # answer in prose instead of calling more tools. This is the turn's
+    # termination guarantee now that there's no separate synthesis node to write
+    # a final answer when the loop is force-stopped.
+    over_budget = _count_tool_rounds_this_turn(state["messages"]) >= MAX_TOOL_ROUNDS
+    llm = get_llm(temperature=0.2)
+    if not over_budget:
+        llm = llm.bind_tools(TOOLS)
 
     system_parts = [ORCHESTRATOR_SYSTEM_PROMPT]
 
@@ -249,7 +255,14 @@ async def orchestrator_node(state: AgentState) -> dict:
     if last_recs:
         system_parts.append(f"\n\n## Last Recommendations (ordered)\n{json.dumps(last_recs)}")
 
-    if _count_clarifications_this_turn(state["messages"]) >= MAX_CLARIFICATIONS_PER_TURN:
+    if over_budget:
+        system_parts.append(
+            "\n\n## Tool budget reached\n"
+            "You have used the maximum data-tool rounds this turn. Do NOT request "
+            "more data — write the FINAL answer to the user NOW, using wine_context, "
+            "the tool results already gathered, and user_preferences."
+        )
+    elif _count_clarifications_this_turn(state["messages"]) >= MAX_CLARIFICATIONS_PER_TURN:
         system_parts.append(
             "\n\n## Clarification cap reached\n"
             f"You have already asked {MAX_CLARIFICATIONS_PER_TURN} clarifying questions this turn. "
@@ -264,7 +277,7 @@ async def orchestrator_node(state: AgentState) -> dict:
     return {"messages": [response]}
 
 
-MAX_TOOL_ROUNDS = 3  # safety net for prompts.py Rule 12 (≤2 rounds expected, +1 buffer)
+MAX_TOOL_ROUNDS = 5  # safety net for prompts.py C3 (≤4 rounds expected, +1 buffer)
 
 
 def _count_tool_rounds_this_turn(messages: list) -> int:
@@ -303,17 +316,13 @@ def _count_clarifications_this_turn(messages: list) -> int:
 
 
 def should_continue(state: AgentState) -> str:
+    # Pending tool_calls must be executed; the loop is bounded because once
+    # MAX_TOOL_ROUNDS is reached the orchestrator binds no tools (see
+    # orchestrator_node) and is forced to answer, so the next pass returns "end".
     last = state["messages"][-1]
     if isinstance(last, AIMessage) and last.tool_calls:
-        # Safety net: if the orchestrator has already issued MAX_TOOL_ROUNDS rounds
-        # of tool calls this turn, stop and force synthesis with whatever data we have.
-        # Without this, malformed queries can drive the agent to recursion_limit (e.g.
-        # SOM-003 hit 30 rounds in run 20260525-225130). The user gets a partial answer
-        # instead of an error.
-        if _count_tool_rounds_this_turn(state["messages"]) >= MAX_TOOL_ROUNDS:
-            return "merge_results"
         return "tools"
-    return "merge_results"
+    return "end"
 
 
 async def tool_node_with_logging(state: AgentState) -> dict:
@@ -332,74 +341,6 @@ async def tool_node_with_logging(state: AgentState) -> dict:
 
     new_state = {**result, "tool_call_log": log_entries[-50:]}
     return new_state
-
-
-def merge_results_node(state: AgentState) -> dict:
-    merged = merge_tool_results(state["messages"])
-    existing = state.get("wine_context", {})
-    existing.update(merged)
-
-    # wine_context is now incrementally populated by compact_tool_results_node
-    # during the ReAct loop; `merged` here is empty for compacted ToolMessages
-    # (results=[]). Derive last_recommendations from wine_context's tail so
-    # reference resolution still has the freshest entries.
-    last_recs = list((existing or {}).keys())[-10:]
-
-    prefs = state.get("user_preferences", {})
-    for msg in state["messages"]:
-        if isinstance(msg, AIMessage):
-            continue
-        content = msg.content if hasattr(msg, "content") and isinstance(msg.content, str) else ""
-        if not content:
-            continue
-        try:
-            data = json.loads(content)
-            if isinstance(data, dict) and data.get("tool") == "update_preferences":
-                if data.get("budget_max"):
-                    prefs["budget_max"] = data["budget_max"]
-                if data.get("add_varietals"):
-                    existing_v = prefs.get("preferred_varietals", [])
-                    prefs["preferred_varietals"] = list(set(existing_v + data["add_varietals"]))
-                if data.get("sweetness"):
-                    prefs["sweetness"] = data["sweetness"]
-                if data.get("style"):
-                    prefs["style"] = data["style"]
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    return {
-        "wine_context": existing,
-        "last_recommendations": last_recs,
-        "user_preferences": prefs if prefs else state.get("user_preferences"),
-    }
-
-
-def _compact_wine_record(rec: dict) -> dict:
-    """Strip a MergedWineRecord down to fields the synthesizer actually uses.
-
-    Splits prices into two lists:
-    - retail_prices: real store inventory rows that go in the Where-to-buy table
-    - reference_prices: critic-quoted prices (Gismondi review snapshots) — these
-      go in a separate "Reference price" note, NEVER in the Where-to-buy table
-    """
-    all_prices = rec.get("prices") or []
-    retail = [p for p in all_prices if not p.get("is_reference")][:10]
-    refs = [p for p in all_prices if p.get("is_reference")][:3]
-    critics = rec.get("critic_reviews") or []
-    return {
-        "display_name": rec.get("display_name"),
-        "producer": rec.get("producer"),
-        "vintage": rec.get("vintage"),
-        "grape": rec.get("grape"),
-        "is_bc_vqa": rec.get("is_bc_vqa"),
-        "consumer_rating": rec.get("consumer_rating"),
-        "avg_critic_score": rec.get("avg_critic_score"),
-        "best_price": rec.get("best_price"),
-        "retail_prices": retail,
-        "reference_prices": refs,
-        "critic_reviews": critics[:6],
-        "tasting_notes_consolidated": rec.get("tasting_notes_consolidated"),
-    }
 
 
 def _extract_text(content) -> str:
@@ -426,121 +367,6 @@ def _extract_text(content) -> str:
     return str(content)
 
 
-def _collect_aux_tool_outputs(messages: list) -> list[dict]:
-    """Pick up reasoning_pair_wine and tavily outputs — tools whose value isn't captured
-    in the merged wine_context but is needed by the synthesizer for pairing logic and
-    educational/disambiguation context.
-    """
-    aux: list[dict] = []
-    for msg in messages:
-        if not isinstance(msg, ToolMessage):
-            continue
-        content = msg.content if isinstance(msg.content, str) else ""
-        if not content:
-            continue
-        try:
-            data = json.loads(content)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        tool = data.get("tool", "")
-        if tool == "reasoning_pair_wine":
-            rec = data.get("recommendation", "")
-            if rec:
-                aux.append({"tool": "reasoning_pair_wine", "recommendation": rec[:2000]})
-        elif tool == "search_tavily":
-            ans = data.get("answer", "")
-            if ans:
-                aux.append({"tool": "search_tavily", "answer": ans[:1500]})
-    return aux[-4:]
-
-
-async def format_response_node(state: AgentState) -> dict:
-    """Synthesis pass — reformat the orchestrator's wine selection into the markdown skeleton.
-
-    The orchestrator's draft provides the *intent signal* (which wines to feature,
-    which to omit as fuzzy-search noise). The wine_context blob provides the *facts*
-    (prices, stores, URLs, critic scores). Synthesis combines them: it follows the
-    orchestrator's recommendations but pulls all numbers and links from wine_context.
-
-    Replaces the orchestrator's last AIMessage in-place (same id) so streaming and
-    downstream consumers see only the synthesized response. Off-topic turns (no tool
-    results, empty wine_context AND no aux outputs) are passed through untouched
-    to avoid latency cost on queries that don't need the skeleton.
-    """
-    msgs = state["messages"]
-    last_ai: AIMessage | None = None
-    last_ai_any: AIMessage | None = None
-    user_query = ""
-    # Walk backwards within this turn only — stop at the most recent HumanMessage
-    # so multi-turn conversations don't bleed an earlier turn's draft into synthesis.
-    for msg in reversed(msgs):
-        if isinstance(msg, HumanMessage):
-            if not user_query:
-                user_query = msg.content if isinstance(msg.content, str) else str(msg.content)
-            break
-        if isinstance(msg, AIMessage):
-            if last_ai_any is None:
-                last_ai_any = msg
-            if last_ai is None and not msg.tool_calls:
-                last_ai = msg
-
-    # If the orchestrator was short-circuited by MAX_TOOL_ROUNDS, the most recent
-    # AIMessage still has tool_calls and no clean draft. Use it anyway (it has the
-    # orchestrator's intent in any text it managed to produce) and let synthesis
-    # write the final response from data.
-    if last_ai is None:
-        last_ai = last_ai_any
-    if last_ai is None:
-        return {}
-
-    wine_ctx = state.get("wine_context") or {}
-    aux_outputs = _collect_aux_tool_outputs(msgs)
-
-    if not wine_ctx and not aux_outputs:
-        return {}
-
-    last_recs = state.get("last_recommendations") or []
-    ordered_keys: list[str] = []
-    for k in last_recs:
-        if k in wine_ctx and k not in ordered_keys:
-            ordered_keys.append(k)
-    for k in wine_ctx.keys():
-        if k not in ordered_keys:
-            ordered_keys.append(k)
-        if len(ordered_keys) >= 8:
-            break
-    ordered_keys = ordered_keys[:8]
-
-    context_blob = {k: _compact_wine_record(wine_ctx[k]) for k in ordered_keys}
-
-    orchestrator_draft = _extract_text(last_ai.content)
-
-    synthesis_input = (
-        f"## User query\n{user_query}\n\n"
-        f"## Orchestrator's wine selection (FOLLOW this — it knows which wines actually "
-        f"answer the user's question vs. which are fuzzy-search noise)\n"
-        f"{orchestrator_draft}\n\n"
-        f"## Wine data (the FACTS — pull prices, stores, URLs, scores from here. "
-        f"Do NOT introduce wines that are not in the orchestrator's selection above.)\n"
-        f"{json.dumps(context_blob, default=str, ensure_ascii=False)}\n\n"
-        f"## Supplementary tool outputs (pairing logic, web answers — use as context, "
-        f"do NOT copy their formatting)\n"
-        f"{json.dumps(aux_outputs, default=str, ensure_ascii=False)}\n"
-    )
-
-    llm = get_llm(temperature=0.0)
-    response = await llm.ainvoke([
-        SystemMessage(content=SYNTHESIS_SYSTEM_PROMPT),
-        HumanMessage(content=synthesis_input),
-    ])
-
-    content = _extract_text(response.content)
-    final_msg = AIMessage(content=content, id=last_ai.id)
-    return {"messages": [final_msg]}
-
-
 # ── Graph builder ────────────────────────────────────────────────
 
 def build_graph(checkpointer=None):
@@ -549,21 +375,19 @@ def build_graph(checkpointer=None):
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("tools", tool_node_with_logging)
     builder.add_node("compact_tool_results", compact_tool_results_node)
-    builder.add_node("merge_results", merge_results_node)
-    builder.add_node("format_response", format_response_node)
 
     builder.set_entry_point("orchestrator")
     builder.add_conditional_edges("orchestrator", should_continue, {
         "tools": "tools",
-        "merge_results": "merge_results",
+        "end": END,
     })
     # Between rounds: tools → compact → orchestrator. Compaction shrinks the
-    # ToolMessage payload the next orchestrator round attends over, while
-    # populating wine_context incrementally so synthesis has facts ready.
+    # ToolMessage payload the next orchestrator round attends over, and populates
+    # wine_context incrementally (+ last_recommendations for multi-turn refs).
+    # When the orchestrator answers with no tool_calls, its message is the final
+    # response shown to the user — there is no separate synthesis pass.
     builder.add_edge("tools", "compact_tool_results")
     builder.add_edge("compact_tool_results", "orchestrator")
-    builder.add_edge("merge_results", "format_response")
-    builder.add_edge("format_response", END)
 
     return builder.compile(checkpointer=checkpointer)
 

@@ -223,18 +223,15 @@ async def chat(req: ChatRequest):
 
         inputs = Command(resume=req.message) if is_resume else {"messages": [("user", req.message)]}
 
-        # The graph streams two LLM responses per turn for on-topic queries:
-        # the orchestrator's draft and format_response's synthesis. We only
-        # want the user to see ONE — the synthesis. So we stream
-        # format_response tokens through directly, and buffer any other node's
-        # tokens (orchestrator). The buffer is only released at the end if
-        # format_response never emitted (off-topic queries where the early
-        # return in format_response_node skips the synthesis LLM call). When
-        # a new orchestrator round starts we drop the previous round's
-        # buffer — only the LATEST orchestrator response is the fallback.
-        fallback_buffer: list[str] = []
-        fallback_run_id = None
-        format_response_started = False
+        # The orchestrator is the only LLM that streams (synthesis was removed).
+        # It may run several rounds per turn; the tool-calling rounds are
+        # intermediate and must not reach the user — only the FINAL round (the
+        # one with no tool_calls) is the answer. We can't tell mid-stream which
+        # round is final, so we buffer each round's tokens keyed by run_id
+        # (resetting on each new round, so only the latest survives) and flush
+        # that buffer once the graph ends with no pending clarification.
+        answer_buffer: list[str] = []
+        answer_run_id = None
 
         try:
             async for event in graph.astream_events(inputs, config=config, version="v2"):
@@ -260,24 +257,24 @@ async def chat(req: ChatRequest):
                         "count": len(summary),
                     })
                 elif kind == "on_chat_model_stream":
-                    metadata = event.get("metadata") or {}
-                    node = metadata.get("langgraph_node", "")
+                    # Only the orchestrator's output is user-facing. Other LLM
+                    # calls in the graph also stream tokens — the relevance filter
+                    # in compact_tool_results (emits JSON like {"drop_indices":[…]})
+                    # and the pairing sub-LLM inside a tool — and must NEVER reach
+                    # the user. Filter by node.
+                    node = (event.get("metadata") or {}).get("langgraph_node", "")
+                    if node != "orchestrator":
+                        continue
                     run_id = event.get("run_id")
                     texts = _extract_token_texts(event["data"]["chunk"])
                     if not texts:
                         continue
-
-                    if node == "format_response":
-                        format_response_started = True
-                        for t in texts:
-                            yield sse({"type": "token", "text": t, "run_id": run_id})
-                    else:
-                        # Orchestrator (any round). Reset buffer when a new
-                        # LLM call starts so only the latest round is kept.
-                        if run_id != fallback_run_id:
-                            fallback_buffer = []
-                            fallback_run_id = run_id
-                        fallback_buffer.extend(texts)
+                    # New run_id = new orchestrator round; drop the prior round's
+                    # buffer so only the latest (final) round is flushed below.
+                    if run_id != answer_run_id:
+                        answer_buffer = []
+                        answer_run_id = run_id
+                    answer_buffer.extend(texts)
 
             # If the orchestrator paused on ask_user_clarification_tool, the
             # graph stops at an interrupt. Surface the question to the frontend
@@ -299,12 +296,11 @@ async def chat(req: ChatRequest):
                 yield sse({"type": "done"})
                 return
 
-            # If the synthesis never ran (off-topic query → format_response
-            # early-returned), flush the last orchestrator response so the
-            # user isn't left with an empty reply.
-            if not format_response_started and fallback_buffer:
-                for t in fallback_buffer:
-                    yield sse({"type": "token", "text": t, "run_id": fallback_run_id})
+            # Flush the final orchestrator round — its answer. Reached only when
+            # there's no pending clarification interrupt (that path returns above).
+            if answer_buffer:
+                for t in answer_buffer:
+                    yield sse({"type": "token", "text": t, "run_id": answer_run_id})
 
             yield sse({"type": "done"})
         except Exception as e:
