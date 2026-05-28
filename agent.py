@@ -162,7 +162,7 @@ async def ask_user_clarification_tool(
 
     Do NOT use when:
     - A reasonable default answer exists from user_preferences or wine_context.
-    - The query is vague but answerable (e.g. "recommend a red" — just pick 2-3 BC reds across styles).
+    - The query is vague but answerable (e.g. "recommend a red" — just pick ~5 BC reds across styles).
     - You are stalling instead of making a judgment call.
 
     Args:
