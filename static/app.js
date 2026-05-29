@@ -376,6 +376,65 @@ function escapeAttr(str) {
   return s.replace(/["'<>]/g, (c) => ({ '"': "&quot;", "'": "&#039;", "<": "&lt;", ">": "&gt;" }[c]));
 }
 
+/* ── Save as PDF ────────────────────────────────── */
+
+function saveAsPdf() {
+  const messages = messagesEl.querySelectorAll(".chat-message, .tool-badge");
+  if (!messages.length) return;
+
+  const lines = [];
+  messages.forEach((el) => {
+    if (el.classList.contains("tool-badge")) {
+      const label = el.querySelector(".tool-badge-label");
+      const count = el.querySelector(".tool-badge-count");
+      if (label) {
+        lines.push(`<div class="pdf-tool">${escapeHtml(label.textContent)}${count ? " — " + escapeHtml(count.textContent) : ""}</div>`);
+      }
+      return;
+    }
+    const isUser = el.classList.contains("user");
+    const role = isUser ? "You" : "BC Wine AI";
+    lines.push(`<div class="pdf-msg ${isUser ? "pdf-user" : "pdf-ai"}"><span class="pdf-role">${role}</span>${el.innerHTML}</div>`);
+  });
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>BC Wine AI — Conversation</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#2A1F22;padding:2rem;max-width:800px;margin:0 auto;line-height:1.6}
+h1{font-size:1.3rem;font-weight:700;color:#7A3D4F;margin-bottom:0.25rem}
+.pdf-date{font-size:0.8rem;color:#998A8C;margin-bottom:2rem;padding-bottom:1rem;border-bottom:1px solid #ECDFE0}
+.pdf-msg{margin-bottom:1.25rem;padding:0.75rem 1rem;border-radius:8px}
+.pdf-user{background:#F4E7E9}
+.pdf-ai{background:#FBF6F6}
+.pdf-role{display:block;font-weight:700;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:0.35rem;color:#7A3D4F}
+.pdf-tool{font-size:0.8rem;color:#6B5B5E;padding:0.3rem 0;margin-left:1rem;font-style:italic}
+.pdf-msg p{margin-bottom:0.5rem}
+.pdf-msg ul,.pdf-msg ol{margin:0.5rem 0 0.5rem 1.5rem}
+.pdf-msg table{border-collapse:collapse;width:100%;margin:0.5rem 0;font-size:0.85rem}
+.pdf-msg th,.pdf-msg td{border:1px solid #ECDFE0;padding:0.4rem 0.6rem;text-align:left}
+.pdf-msg th{background:#F4E7E9;font-weight:600}
+.pdf-msg a{color:#7A3D4F}
+.pdf-msg h1,.pdf-msg h2,.pdf-msg h3{font-size:1rem;font-weight:700;margin:0.75rem 0 0.25rem}
+</style></head><body>
+<h1>BC Wine AI Agent</h1>
+<div class="pdf-date">${new Date().toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+${lines.join("\n")}
+</body></html>`;
+
+  const w = window.open("", "_blank");
+  if (!w) {
+    alert("Please allow pop-ups to save as PDF.");
+    return;
+  }
+  w.document.write(html);
+  w.document.close();
+  w.onafterprint = () => w.close();
+  setTimeout(() => w.print(), 300);
+}
+
+const savePdfBtn = $("#chat-save-pdf");
+if (savePdfBtn) savePdfBtn.addEventListener("click", saveAsPdf);
+
 /* ── Event listeners ─────────────────────────────── */
 
 sendBtn.addEventListener("click", sendMessage);
