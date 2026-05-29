@@ -36,7 +36,7 @@ HEADERS = {
 # Max concurrent detail-page fetches. The detail pages (one per wine, for critic
 # reviews) are the tool's bottleneck; fetching them in parallel instead of serially
 # cuts review retrieval ~10x. Kept modest to stay polite to the host.
-REVIEW_CONCURRENCY = 6
+REVIEW_CONCURRENCY = 10
 
 
 # ── Data Models ─────────────────────────────────────────────────────

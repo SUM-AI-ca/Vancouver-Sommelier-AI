@@ -34,13 +34,13 @@ from state import AgentState, MergedWineRecord
 log = logging.getLogger("bc-wine-agent.compaction")
 
 
-MAX_COMPACT_TOP_N = 20
 
 _COMPACTABLE_STORE_TOOLS = {
     "search_bcliquor",
     "search_marquis",
     "search_okanagan_cellars",
     "search_everything_wine",
+    "search_legacy_liquor_store",
 }
 _COMPACTABLE_CRITIC_TOOLS = {
     "search_winealign",
@@ -146,7 +146,7 @@ def _build_compact_payload(tool: str, raw_results: list[dict]) -> dict:
         "tool": tool,
         "compacted": True,
         "result_count": len(raw_results),
-        "top_results": rows[:MAX_COMPACT_TOP_N],
+        "top_results": rows,
         # results=[] so any future merge_tool_results pass over this message is a no-op.
         "results": [],
     }

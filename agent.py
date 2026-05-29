@@ -11,16 +11,16 @@ from langgraph.prebuilt import ToolNode
 from langgraph.types import interrupt
 
 from bcliquor_tool import search_bcliquor
-from compaction import compact_tool_results_node
 from everythingwine_tool import search_everything_wine
 from gismondi_tool import search_gismondi
+from legacy_tool import search_legacy as search_legacy_liquor_store
 from marquis_tool import search_marquis
 from models import get_llm
 from okanagan_cellars_tool import search_okanagan_cellars
 from prompts import ORCHESTRATOR_SYSTEM_PROMPT, PAIRING_SYSTEM_PROMPT
 from robert_parker_tool import search_robert_parker
 from safety import safe_tool
-from state import AgentState, UserPreferences
+from state import AgentState
 from tavily_tool import search_tavily
 from winealign_tool import search_winealign
 
@@ -40,7 +40,7 @@ async def search_bcliquor_tool(query: str, max_pages: int = 2, category: str | N
 async def search_winealign_tool(query: str, max_pages: int = 3, include_reviews: bool = True) -> str:
     """Search WineAlign for multi-critic professional reviews with scores, tasting notes, value ratings, and drink windows.
     Use when the user asks "what do critics think", "is this worth buying", or wants aging guidance.
-    Slow (3-10s). Do not call more than twice per turn. Always attribute by critic name.
+    Slow (3-10s). Always attribute by critic name.
     """
     results = await search_winealign(query, max_pages=max_pages, include_reviews=include_reviews)
     return json.dumps({"status": "ok", "tool": "search_winealign", "results": [r.model_dump() for r in results]})
@@ -66,7 +66,7 @@ async def search_okanagan_cellars_tool(query: str) -> str:
 
 
 @tool
-async def search_marquis_tool(query: str, limit: int = 30, skip: int = 0) -> str:
+async def search_marquis_tool(query: str, limit: int = 20, skip: int = 0) -> str:
     """Search Marquis Wine Cellars (Vancouver, curated boutique shop) for wines with hierarchical categories and MSRP.
     Use for curated/boutique selections or MSRP vs sale price comparison.
     """
@@ -75,9 +75,29 @@ async def search_marquis_tool(query: str, limit: int = 30, skip: int = 0) -> str
 
 
 @tool
+async def search_legacy_liquor_store_tool(
+    query: str,
+    limit: int = 30,
+    price_min: float | None = None,
+    price_max: float | None = None,
+    on_sale: bool | None = None,
+    staff_pick: bool | None = None,
+) -> str:
+    """Search Legacy Liquor Store (Vancouver, premium selection) for wines with price filtering and staff picks.
+    Use for premium/curated selections, sale items, or staff-recommended wines.
+    Supports price_min/price_max for budget queries and staff_pick=True for expert recommendations.
+    """
+    results, total = await search_legacy_liquor_store(
+        query, limit=limit, price_min=price_min, price_max=price_max,
+        on_sale=on_sale, staff_pick=staff_pick,
+    )
+    return json.dumps({"status": "ok", "tool": "search_legacy_liquor_store", "total": total, "results": [r.model_dump() for r in results]})
+
+
+@tool
 async def search_gismondi_tool(
     query: str,
-    limit: int = 20,
+    limit: int = 25,
     score_min: int = 0,
     price_max: float | None = None,
     bc_only: bool = True,
@@ -102,7 +122,7 @@ async def search_robert_parker_tool(
 ) -> str:
     """Search Robert Parker Wine Advocate for world-class 100-point ratings, tasting notes, and drink windows.
     Use when the user asks for Robert Parker/RP scores, internationally recognized ratings, or global comparisons.
-    Authenticated. Do not call more than once per turn.
+    Authenticated.
     """
     results = await search_robert_parker(
         query, rating_min=rating_min, hits_per_page=hits_per_page,
@@ -121,7 +141,7 @@ async def search_tavily_tool(
     """Web search fallback with AI-generated answer summary.
     Use ONLY for: (1) non-Western cuisine pairings, (2) educational/regional questions,
     or (3) disambiguation when all store tools return empty.
-    Paid per request. Call at most once per turn. Never as a first-line tool for inventory/pricing.
+    Never as a first-line tool for inventory/pricing.
     """
     results, answer = await search_tavily(query, max_results=max_results, search_depth=search_depth, include_answer=include_answer)
     return json.dumps({"status": "ok", "tool": "search_tavily", "answer": answer, "results": [r.model_dump() for r in results]})
@@ -157,10 +177,10 @@ async def ask_user_clarification_tool(
       (e.g. "good wine" with no budget/style/occasion hint).
     - Tool results have several closely-matched wines and the user's preference would break the tie.
     - Essential information is missing (food pairing request with no dish; "the second one" with no
-      prior context in wine_context).
+      prior context in conversation history).
 
     Do NOT use when:
-    - A reasonable default answer exists from user_preferences or wine_context.
+    - A reasonable default answer exists from conversation history.
     - The query is vague but answerable (e.g. "recommend a red" — just pick ~5 BC reds across styles).
     - You are stalling instead of making a judgment call.
 
@@ -214,6 +234,7 @@ TOOLS = [
     search_everything_wine_tool,
     search_okanagan_cellars_tool,
     search_marquis_tool,
+    search_legacy_liquor_store_tool,
     search_gismondi_tool,
     search_robert_parker_tool,
     search_tavily_tool,
@@ -229,11 +250,30 @@ SAFE_TOOLS = [safe_tool(t) for t in TOOLS]
 
 # ── Graph nodes ──────────────────────────────────────────────────
 
+def _filter_previous_turns(messages: list) -> list:
+    """Keep only Human + final AI answer from previous turns.
+    Current turn (after last HumanMessage) is kept in full."""
+    last_human_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[i], HumanMessage):
+            last_human_idx = i
+            break
+
+    if last_human_idx <= 0:
+        return messages
+
+    filtered = []
+    for msg in messages[:last_human_idx]:
+        if isinstance(msg, HumanMessage):
+            filtered.append(msg)
+        elif isinstance(msg, AIMessage) and not msg.tool_calls:
+            filtered.append(msg)
+
+    filtered.extend(messages[last_human_idx:])
+    return filtered
+
+
 async def orchestrator_node(state: AgentState) -> dict:
-    # Once the data-tool round budget is spent, bind NO tools so the model must
-    # answer in prose instead of calling more tools. This is the turn's
-    # termination guarantee now that there's no separate synthesis node to write
-    # a final answer when the loop is force-stopped.
     over_budget = _count_tool_rounds_this_turn(state["messages"]) >= MAX_TOOL_ROUNDS
     llm = get_llm(temperature=0.2)
     if not over_budget:
@@ -241,43 +281,28 @@ async def orchestrator_node(state: AgentState) -> dict:
 
     system_parts = [ORCHESTRATOR_SYSTEM_PROMPT]
 
-    prefs = state.get("user_preferences")
-    if prefs:
-        system_parts.append(f"\n\n## Active User Preferences\n{json.dumps(prefs)}")
-
-    wine_ctx = state.get("wine_context")
-    if wine_ctx:
-        keys = list(wine_ctx.keys())[:20]
-        summary = {k: {"name": wine_ctx[k]["display_name"], "best_price": wine_ctx[k].get("best_price")} for k in keys}
-        system_parts.append(f"\n\n## Wine Context (cached)\n{json.dumps(summary, default=str)}")
-
-    last_recs = state.get("last_recommendations")
-    if last_recs:
-        system_parts.append(f"\n\n## Last Recommendations (ordered)\n{json.dumps(last_recs)}")
-
     if over_budget:
         system_parts.append(
             "\n\n## Tool budget reached\n"
             "You have used the maximum data-tool rounds this turn. Do NOT request "
-            "more data — write the FINAL answer to the user NOW, using wine_context, "
-            "the tool results already gathered, and user_preferences."
+            "more data — write the FINAL answer to the user NOW using the tool "
+            "results already gathered."
         )
     elif _count_clarifications_this_turn(state["messages"]) >= MAX_CLARIFICATIONS_PER_TURN:
         system_parts.append(
             "\n\n## Clarification cap reached\n"
             f"You have already asked {MAX_CLARIFICATIONS_PER_TURN} clarifying questions this turn. "
-            "Do NOT call ask_user_clarification_tool again. Proceed with the best answer you can "
-            "give from the user's replies, wine_context, and user_preferences."
+            "Do NOT call ask_user_clarification_tool again. Proceed with the best answer you can."
         )
 
     system_msg = SystemMessage(content="\n".join(system_parts))
-    messages = [system_msg] + state["messages"]
+    messages = [system_msg] + _filter_previous_turns(state["messages"])
 
     response = await llm.ainvoke(messages)
     return {"messages": [response]}
 
 
-MAX_TOOL_ROUNDS = 5  # safety net for prompts.py C3 (≤4 rounds expected, +1 buffer)
+MAX_TOOL_ROUNDS = 6  # safety net for prompts.py C3 (≤5 rounds expected, +1 buffer)
 
 
 def _count_tool_rounds_this_turn(messages: list) -> int:
@@ -374,20 +399,13 @@ def build_graph(checkpointer=None):
 
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("tools", tool_node_with_logging)
-    builder.add_node("compact_tool_results", compact_tool_results_node)
 
     builder.set_entry_point("orchestrator")
     builder.add_conditional_edges("orchestrator", should_continue, {
         "tools": "tools",
         "end": END,
     })
-    # Between rounds: tools → compact → orchestrator. Compaction shrinks the
-    # ToolMessage payload the next orchestrator round attends over, and populates
-    # wine_context incrementally (+ last_recommendations for multi-turn refs).
-    # When the orchestrator answers with no tool_calls, its message is the final
-    # response shown to the user — there is no separate synthesis pass.
-    builder.add_edge("tools", "compact_tool_results")
-    builder.add_edge("compact_tool_results", "orchestrator")
+    builder.add_edge("tools", "orchestrator")
 
     return builder.compile(checkpointer=checkpointer)
 
