@@ -71,7 +71,7 @@ async def search_marquis(
 
     Args:
         query: Wine name, winery, or varietal
-        limit: Max results per page (default 20)
+        limit: Max results per page (default 30)
         skip:  Offset for pagination
 
     Returns:

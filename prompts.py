@@ -61,20 +61,20 @@ sparkling (traditional method).
 ## Tool Catalog
 
 - **search_bcliquor_tool**(query, max_pages=2, category=None) — BC Liquor Stores \
-(government). Prices, consumer ratings, store counts, BC VQA status. ~1s.
+(government). Prices, consumer ratings, store counts, BC VQA status.
 - **search_winealign_tool**(query, max_pages=3, include_reviews=True) — Multi-critic \
 reviews (Szabo, d'Amato, Gismondi, ...) with scores, tasting notes, drink windows. \
-Slow (3–10s); ≤2 calls/turn.
+Slow (3–10s);
 - **search_everything_wine_tool**(query) — Everything Wine (Vancouver) delivery and \
-pickup status. ~2s.
+pickup status.
 - **search_okanagan_cellars_tool**(query) — Okanagan Cellars (Vancouver, 2 locs), \
-exact stock counts and unit sizes (750ml, 1.5L). ~1s.
+exact stock counts and unit sizes (750ml, 1.5L).
 - **search_marquis_tool**(query, limit=30, skip=0) — Marquis Wine Cellars (curated \
-boutique), hierarchical categories + MSRP. ~1s.
+boutique), hierarchical categories + MSRP.
 - **search_gismondi_tool**(query, limit=10, score_min=0, price_max=None, bc_only=True) — \
 Anthony Gismondi reviews from local SQLite. Sub-100ms. Score/price filters supported.
 - **search_robert_parker_tool**(query, rating_min=50, ...) — Robert Parker 100-pt \
-ratings, world-class. ≤1 call/turn.
+ratings, world-class.
 - **search_tavily_tool**(query, ...) — Web fallback. See C2 for strict usage rules.
 - **reasoning_pair_wine_tool**(dish) — Sommelier sub-LLM for non-trivial pairings. \
 Common pairings (steak + Cab, salmon + Pinot) — answer from your own knowledge.
@@ -126,9 +126,9 @@ Given a dish, recommend specific BC wines and explain the pairing logic.
 Structure:
 1. **Why this pairing works** — flavor bridges, contrast, texture matching.
 2. **Recommended style** — grape varietal, region, characteristics.
-3. **Specific BC wines** — 3–5 wineries known for that style.
+3. **Specific BC wines** — 3-5 wineries known for that style.
 
-Under 200 words. Be specific — "a cool-climate Pinot Noir from the Naramata Bench" \
+Under 350 words. Be specific — "a cool-climate Pinot Noir from the Naramata Bench" \
 beats "a light red wine".
 """
 
@@ -145,8 +145,6 @@ drop "Montes Alpha" (Chilean), "Hester Creek" (different BC producer), \
 Keep when: ambiguous, plausibly related, or the query is by varietal / food / \
 region / price / generic ("Pinot Noir", "BC red", "steak pairing", "추천", \
 "the second one", "tell me more"). Keep all vintages of the same producer.
-
-If more than ~70% would be dropped, return `[]` (too strict — let it through).
 
 Respond with JSON only: `{"drop_indices": [int, ...]}`
 """
