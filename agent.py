@@ -77,7 +77,7 @@ async def search_marquis_tool(query: str, limit: int = 30, skip: int = 0) -> str
 @tool
 async def search_gismondi_tool(
     query: str,
-    limit: int = 10,
+    limit: int = 20,
     score_min: int = 0,
     price_max: float | None = None,
     bc_only: bool = True,
@@ -114,7 +114,7 @@ async def search_robert_parker_tool(
 @tool
 async def search_tavily_tool(
     query: str,
-    max_results: int = 5,
+    max_results: int = 8,
     search_depth: str = "basic",
     include_answer: bool = True,
 ) -> str:

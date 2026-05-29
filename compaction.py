@@ -34,7 +34,7 @@ from state import AgentState, MergedWineRecord
 log = logging.getLogger("bc-wine-agent.compaction")
 
 
-MAX_COMPACT_TOP_N = 15
+MAX_COMPACT_TOP_N = 20
 
 _COMPACTABLE_STORE_TOOLS = {
     "search_bcliquor",

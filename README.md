@@ -9,10 +9,10 @@ BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으�
 ReAct loop이 `tools → orchestrator`로 돌아갈 때, 각 라운드의 raw tool JSON (store당 24+ rows × 20+ fields)이 그대로 `state["messages"]`에 쌓이면서 다음 라운드 오케스트레이터가 그걸 전부 다시 attend함. 이걸 해결하려고 `tools`와 `orchestrator` 사이에 결정론적(LLM 없음) compaction 노드를 끼움.
 
 각 batch에 대해:
-1. Raw 결과를 **즉시** `wine_context`에 incremental merge — synthesis가 쓸 facts를 loop 내부에서 미리 채움.
-2. 각 compactable ToolMessage를 **같은 id로** 작은 projection (`top_results`: top-5, key field만)으로 교체 → langgraph `add_messages` reducer가 in-place replace. 다음 라운드 orchestrator context가 ~10× 감소.
-3. `results: []`을 compact payload에 박아둬서 최종 `merge_results_node`의 재호출은 자동 no-op.
-4. Tavily / reasoning_pair_wine / update_preferences는 pass-through (synthesis aux collector, prefs harvest에서 raw가 필요).
+1. Raw 결과를 **즉시** `wine_context`에 incremental merge — 오케스트레이터의 최종 답변이 참조할 facts를 loop 내부에서 미리 채움 (system prompt에 요약으로 주입).
+2. 각 compactable ToolMessage를 **같은 id로** 작은 projection (`top_results`: 최대 `MAX_COMPACT_TOP_N`=20 rows, key field만)으로 교체 → langgraph `add_messages` reducer가 in-place replace. 다음 라운드 orchestrator context가 대폭 감소.
+3. `results: []`을 compact payload에 박아둬서 이후 `merge_tool_results` 재호출은 자동 no-op.
+4. Tavily / reasoning_pair_wine / update_preferences는 pass-through (긴 본문 보존 + prefs harvest에서 raw가 필요).
 
 구현: [`compaction.py`](compaction.py) (`compact_tool_results_node` + projection 헬퍼), [`agent.py`](agent.py)에 노드 + 엣지 추가. 그래프 흐름은 이제 `orchestrator → tools → compact_tool_results → orchestrator (loop)`.
 
@@ -41,10 +41,10 @@ ReAct loop이 `tools → orchestrator`로 돌아갈 때, 각 라운드의 raw to
 
 - **랜딩 + 풀스크린 채팅 오버레이** — 간단한 capability 설명이 있는 랜딩 페이지에서 "Start chatting" 버튼을 누르면 화면을 가득 채우는 채팅 오버레이가 뜬다.
 - **연한 와인 컬러 팔레트** — 기존 SUM AI 파란색에서 데사추레이트된 burgundy(`#7A3D4F`) 톤으로 교체. 이모지/장식용 유니코드 심볼은 모두 제거.
-- **상태 인디케이터** — 채팅 헤더가 `Ready` → `Processing` → `Running <tool>` → `Writing response` → `Task finished` 순으로 실시간 상태를 보여준다. 작동 중 점 세 개 애니메이션은 제거.
+- **상태 인디케이터** — 채팅 헤더 좌상단에 텍스트 없이 **심볼만** 표시한다. 대기 중에는 고정된 점, 작동 중에는 회전 링 스피너로 전환된다 (내부적으로 `Ready`/`Processing`/`Running <tool>`/`Writing response`/`Task finished` 상태의 working 플래그로 토글). 상태 텍스트는 `font-size:0`으로 시각적으로만 숨기고 DOM에는 남겨 `aria-live`로 스크린리더에 그대로 전달된다.
 - **툴 배지** — 각 tool 호출이 expandable 배지로 렌더링됨. 완료되면 결과 개수 표시 + 클릭으로 결과 미리보기 드롭다운. Sommelier reasoning / Tavily 처럼 긴 본문은 마크다운으로 렌더링.
 - **세션은 채팅 오픈 단위** — `thread_id`를 `localStorage`에 저장하지 않음. 채팅을 열 때마다 새 thread_id 발급 → 같은 오버레이 안에서는 follow-up이 메모리를 공유하지만, 닫고 다시 열면 깨끗한 상태로 시작한다. (이전: 영구 persisted thread → `wine_context`가 무한 누적되며 무관한 와인이 새 대화에 누출됨)
-- **중복 출력 제거** — 오케스트레이터 draft tokens은 서버에서 버퍼링되고 `format_response`의 synthesis만 클라이언트로 스트리밍됨. Off-topic 쿼리(synthesis 스킵)에서는 마지막 orchestrator 응답이 fallback으로 release.
+- **중복 출력 제거** — synthesis 패스는 제거됨 (오케스트레이터 출력이 곧 최종 답변). 한 turn에 오케스트레이터가 여러 라운드를 돌 수 있어, 서버는 각 라운드 토큰을 `run_id`별로 버퍼링하고 새 라운드마다 이전 버퍼를 폐기해 **tool_calls가 없는 마지막 라운드**만 클라이언트로 flush한다.
 - **링크는 새 탭** — `marked.parse` 결과 모든 `<a>` 태그에 `target="_blank" rel="noopener noreferrer"` 자동 주입.
 
 상세 아키텍처 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다.
@@ -72,7 +72,7 @@ LangGraph Agent (agent.py — Gemini 3.5 Flash, 11개 tool)
     │                  interrupt() → SSE clarification_request → 유저 응답
     │                     ↓ Command(resume=...) → 다음 orchestrator round
     │                                                       ↓ (no tool_calls)
-    │   merge_results → format_response → END
+    │   orchestrator 최종 답변 → END  (별도 synthesis 노드 없음)
     ↓
 ┌─────────────────────────────────────────────────────┐
 │  Tools (데이터 수집 — 모두 완성)                       │
@@ -171,13 +171,14 @@ results = await search_everything_wine("synchromesh")
 
 ### 6. Gismondi on Wine (`gismondi_tool.py` + `data/wines.db`)
 
-캐나다 와인 평론가 Anthony Gismondi의 리뷰 데이터. 원본 CSV는 별도 submodule (`gismondi-canada-wines/`)에서 관리되고, 거기 GitHub Actions이 주 3회 자동 스크래핑한다. 그런데 매번 CSV를 파싱하는 건 비효율적이라 SQLite로 빌드해서 쓰기로 했다. 어차피 데이터가 1400건 수준이라 SQLite로 충분하고, FTS5 가상 테이블 붙이면 풀텍스트 검색도 깔끔하게 된다.
+캐나다 와인 평론가 Anthony Gismondi의 리뷰 데이터. 원본 CSV는 별도 submodule (`gismondi-canada-wines/`)에서 관리되고, 거기 GitHub Actions이 주 3회 자동 스크래핑한다. 그런데 매번 CSV를 파싱하는 건 비효율적이라 SQLite로 빌드해서 쓰기로 했다. 데이터가 현재 1만 3천여 건 수준이라 SQLite + FTS5로도 충분히 빠르게 풀텍스트 검색이 된다.
 
 처음엔 FTS5 쿼리에 아포스트로피("quails' gate" 같은) 넣으면 syntax error가 났는데, `re.sub(r'[^\w\s]', ' ', query)`로 special char 다 날리고 토큰만 남기는 식으로 해결했다. FTS5는 디폴트가 implicit AND라서 토큰 두 개 들어가면 둘 다 매칭되는 문서만 반환한다.
 
-- **데이터**: 와인 이름, /100 점수, /20 점수, region, tasting notes, taster, 가격, producer, grape, distributor, url 등 — 현재 1391건
+- **데이터**: 와인 이름, /100 점수, /20 점수, region, tasting notes, taster, 가격, producer, grape, distributor, url 등 — 현재 13,539건 (2026-05-28 빌드 기준)
 - **FTS5 인덱스 필드**: title, region, tasting_notes, grape, producer
 - **필터**: `score_min`, `price_max`, `bc_only` (기본 True)
+- **기본 반환 개수**: 에이전트(`search_gismondi_tool`)는 `limit=20`으로 호출 (코어 `search_gismondi` 자체 기본값은 10)
 - **빌드**: `python build_db.py` (CSV → `data/wines.db`)
 - **자동 업데이트**: `.github/workflows/update_db.yml`이 Tue/Thu/Sat 02:00 UTC에 submodule pull → DB 재빌드 → 변경분 커밋. 원본 스크래퍼가 Mon/Wed/Fri에 돌아서 2시간 뒤 따라가게 맞췄다.
 - **async 처리**: SQLite는 blocking이라 `asyncio.to_thread()`로 감싸서 이벤트 루프 안 막게 함
@@ -218,6 +219,7 @@ results = await search_robert_parker(
 
 - **인증**: `.env`의 `TAVILY_API_KEY` 필요
 - **데이터**: title, url, content snippet, relevance score, published_date, AI-generated summary
+- **기본 반환 개수**: 에이전트(`search_tavily_tool`)는 `max_results=8`로 호출 (코어 `search_tavily` 자체 기본값은 5, 허용 범위 1–10)
 - **주의**: 호출당 과금. agent 시스템 프롬프트에서 호출 빈도 제한할 예정 (turn당 1회 권장)
 
 ```python
@@ -230,13 +232,13 @@ results, answer = await search_tavily("best food pairings for BC Pinot Noir")
 
 ```
 BC-wine-ai-agents/
-├── agent.py                    # LangGraph 그래프 빌더 (ReAct + 10 tools)
+├── agent.py                    # LangGraph 그래프 빌더 (ReAct + 11 tools, synthesis 노드 없음)
 ├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, 세션 관리, validation 게이트)
 ├── validation.py               # Pre-agent query 검증 (off-topic 쿼리 그래프 우회)
 ├── compaction.py               # Tool result compaction 노드 (라운드 사이 context 축소 + incremental wine_context merge)
 ├── state.py                    # AgentState TypedDict + 관련 스키마
 ├── models.py                   # Gemini 3.5 Flash LLM 팩토리
-├── prompts.py                  # 오케스트레이터/페어링/합성/검증 시스템 프롬프트
+├── prompts.py                  # 오케스트레이터/페어링/relevance-filter/검증 시스템 프롬프트 (synthesis 제거)
 ├── safety.py                   # safe_tool 데코레이터 (에러 래핑)
 ├── merge.py                    # 와인 이름 정규화 + 매장 간 중복 제거
 ├── winealign_tool.py           # WineAlign 검색
@@ -254,7 +256,7 @@ BC-wine-ai-agents/
 │   ├── styles.css              # 와인 컬러 팔레트, 채팅 + 툴 배지 스타일
 │   └── app.js                  # SSE 클라이언트, run_id 기반 툴 배지 매칭, 마크다운 렌더링
 ├── data/
-│   ├── wines.db                # Gismondi 리뷰 SQLite (1391 rows, FTS5)
+│   ├── wines.db                # Gismondi 리뷰 SQLite (~13,539 rows, FTS5)
 │   └── checkpoints.db          # LangGraph 체크포인터 (gitignored)
 ├── gismondi-canada-wines/      # 원본 CSV (git submodule)
 ├── tests/                      # Golden-query quality evaluation
@@ -356,7 +358,7 @@ python gismondi_tool.py         # pinot/riesling/chardonnay 등 6종 쿼리
 - **Pydantic** — 데이터 모델 & 유효성 검사
 - **python-dotenv** — 환경변수 로딩
 - **SQLite + FTS5** — Gismondi 리뷰 로컬 DB (Python 표준 라이브러리, 별도 설치 없음)
-- **LangGraph** — ReAct 에이전트 오케스트레이션 (10개 tool, 병렬 실행)
+- **LangGraph** — ReAct 에이전트 오케스트레이션 (11개 tool, 병렬 실행)
 - **Gemini 3.5 Flash (Vertex AI)** — 모든 노드에서 사용하는 LLM
 - **FastAPI** — SSE 스트리밍 백엔드
 - **HTML/CSS/JS** — SUM AI 디자인 계승 채팅 UI (vanilla, 빌드 스텝 없음)
@@ -370,7 +372,7 @@ python gismondi_tool.py         # pinot/riesling/chardonnay 등 6종 쿼리
 모든 tool은 같은 구조를 따름:
 
 1. **`search_*(query)` 함수** — async, 구조화된 Pydantic 모델 리스트 반환
-2. **`format_results()` 함수** — LLM이 읽기 좋은 텍스트 포맷으로 변환
+2. **`format_results()` 함수** — 사람이 읽기 좋은 텍스트 포맷. **독립 실행 테스트(`main()`) 전용** — 에이전트 경로에서는 `@tool` 래퍼가 `json.dumps(model_dump())`로 전체 필드를 직렬화해 반환하므로 호출되지 않는다.
 3. **`main()` 함수** — `python tool.py`로 독립 실행 가능한 테스트
 4. **Pydantic 모델** — 각 사이트에 맞는 데이터 구조 정의
 
@@ -392,10 +394,10 @@ python -m uvicorn app:app --port 8000
 
 - [x] `state.py` — `AgentState` TypedDict
 - [x] `models.py` — Gemini 3.5 Flash 팩토리 (Vertex AI)
-- [x] `prompts.py` — orchestrator + synthesis 프롬프트 (15개 behavioral rules, table-skeleton output contract)
+- [x] `prompts.py` — orchestrator + pairing + relevance-filter + validation 프롬프트. behavioral rules는 Hard Constraints(C1–C3) / Guidelines(G1–G6)로 분리. synthesis 프롬프트는 제거됨.
 - [x] `safety.py` — `safe_tool` 데코레이터 (graceful degradation)
 - [x] `merge.py` — 와인 이름 정규화 + 매장 간 중복 제거 (rapidfuzz). Gismondi 의 `price_channel` → synthetic StorePrice 변환 포함.
-- [x] `agent.py` — LangGraph 그래프 빌드, ReAct + InMemorySaver. `MAX_TOOL_ROUNDS=3` safety net + `format_response_node` 합성 단계 구현.
+- [x] `agent.py` — LangGraph 그래프 빌드, ReAct + InMemorySaver. `MAX_TOOL_ROUNDS=5` safety net + compaction 노드. synthesis(`format_response`) 노드는 제거 — 오케스트레이터 출력이 곧 최종 답변.
 - [x] `app.py` — FastAPI + SSE 스트리밍 + 세션 관리
 - [x] `static/` — SUMAI 디자인 베이스 채팅 UI
 - [x] `tests/` — 38개 golden query + 결정론적 metric + LLM-as-judge (`python -m tests.quality_eval`)
