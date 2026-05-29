@@ -166,7 +166,7 @@ async def ask_user_clarification_tool(
 
     Args:
         question: The clarifying question, written in the SAME language as the user. One sentence.
-        options: 2-4 short option strings the user can click. Leave empty for free-form replies.
+        options: Up to 7 short option strings the user can click. Leave empty for free-form replies.
 
     Returns the user's clarification reply as a string. The user may type free text instead of
     choosing one of the options.
