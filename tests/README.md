@@ -7,10 +7,10 @@ Golden-query eval pipeline for the BC Wine AI Agent. Run on your own machine.
 For each query in `golden_queries.py`:
 
 1. Invokes the LangGraph (`agent.get_graph().ainvoke`) on a fresh thread.
-2. Captures the resulting `state` — messages, `wine_context`, `user_preferences`, `tool_call_log`.
+2. Captures the resulting `state` — messages, `tool_call_log`.
 3. Runs **deterministic metrics** (`metrics.py`):
    - Tool orchestration (precision / recall / F1, forbidden-call check, per-turn limit check)
-   - Hallucination check against both raw tool output **and** `wine_context` (so post-compaction facts surviving only in `wine_context` count as supported)
+   - Hallucination check against raw tool output
    - Coverage (distinct stores / critics cited)
    - Output-contract score (Lead / Why / Where-to-buy / Pairing skeleton)
    - Multi-turn reference resolution + preferences-active checks
@@ -106,7 +106,7 @@ Iteration history lives in `docs/AGENT_DESIGN.md` §16.5.
 
 **"Did my prompt/code change regress anything?"** — run `--skip-judge` first for a fast deterministic sweep, then run full suite if structure / hallucination / orchestration metrics look clean.
 
-**"Why did one query fail?"** — open `transcripts/<id>.md`. Tool I/O, final response, and all metrics are there. For deeper context, the `wine_context` snapshot is in `results.json` under `queries[i].turns[j]`.
+**"Why did one query fail?"** — open `transcripts/<id>.md`. Tool I/O, final response, and all metrics are there.
 
 **"I want to compare runs."** — both runs live in `tests/results/<timestamp>/`. Diff their `summary.md` files (or load both `results.json` and diff the `aggregate` blocks).
 

@@ -148,6 +148,41 @@ def _extract_marquis(results: list[dict]) -> list[tuple[MergedWineRecord, str, s
     return out
 
 
+def _extract_legacy(results: list[dict]) -> list[tuple[MergedWineRecord, str, str, int | None]]:
+    out = []
+    for r in results:
+        name = r.get("name", "")
+        prod_slug, wine_slug, vintage = normalize(name, r.get("brand"))
+        price = _parse_price(r.get("price"))
+        if price is None:
+            continue
+        sp: StorePrice = {
+            "store": "legacy",
+            "price": price,
+            "on_sale": r.get("on_sale", False),
+            "in_stock": r.get("in_stock", True),
+            "url": r.get("url"),
+            "stock_qty": r.get("stock_qty"),
+        }
+        rec: MergedWineRecord = {
+            "normalized_key": "",
+            "display_name": name,
+            "producer": r.get("brand", ""),
+            "vintage": vintage,
+            "grape": [],
+            "prices": [sp],
+            "best_price": None,
+            "critic_reviews": [],
+            "avg_critic_score": None,
+            "consumer_rating": None,
+            "consumer_votes": None,
+            "is_bc_vqa": False,
+            "tasting_notes_consolidated": None,
+        }
+        out.append((rec, prod_slug, wine_slug, vintage))
+    return out
+
+
 def _extract_okanagan(results: list[dict]) -> list[tuple[MergedWineRecord, str, str, int | None]]:
     out = []
     for r in results:
@@ -324,6 +359,7 @@ def _extract_robert_parker(
 TOOL_TO_EXTRACTOR = {
     "search_bcliquor": ("store", _extract_bcliquor),
     "search_marquis": ("store", _extract_marquis),
+    "search_legacy_liquor_store": ("store", _extract_legacy),
     "search_okanagan_cellars": ("store", _extract_okanagan),
     "search_everything_wine": ("store", _extract_everythingwine),
     "search_winealign": ("critic", _extract_winealign),

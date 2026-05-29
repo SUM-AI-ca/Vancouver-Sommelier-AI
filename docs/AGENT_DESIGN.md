@@ -4,13 +4,15 @@
 **Last Updated:** 2026-05-29
 **Stack:** LangGraph · Gemini 3.5 Flash (Vertex AI) · Python 3.12 · FastAPI · HTML/CSS/JavaScript · SQLite (FTS5) · LangSmith
 
-> **Architecture note (2026-05):** The separate synthesis node (`format_response`) and the
-> final `merge_results` node have been **removed**. The graph is now
-> `orchestrator → tools → compact_tool_results → orchestrator (loop)`, and the orchestrator's
-> first message with no `tool_calls` is the final answer streamed to the user (there is no
-> downstream formatter). The Architecture Diagram, §4, §6.4, and §8.9 reflect the current
-> graph. The iteration history (§16.5) and roadmap/future sections (§15, §18) are preserved
-> as a historical record and still mention the old synthesis pass.
+> **Architecture note (2026-05):** The separate synthesis node (`format_response`), the
+> final `merge_results` node, and the `compact_tool_results` compaction node have all been
+> **removed**. The graph is now `orchestrator → tools → orchestrator (loop)`. Raw tool
+> output is passed directly to the orchestrator — answer quality is higher without
+> compaction (verbatim critic quotes, multi-store pricing preserved). The orchestrator's
+> first message with no `tool_calls` is the final answer streamed to the user. State has
+> been simplified: only `messages` and `tool_call_log` remain (`wine_context`,
+> `user_preferences`, `last_recommendations` removed). Multi-turn context is managed
+> by filtering previous turns to keep only user questions and final AI answers.
 
 ---
 
@@ -41,7 +43,7 @@
 
 ### Purpose
 
-The BC Wine AI Agent is a domain-specific conversational assistant that answers questions about British Columbia (BC) wines by unifying data across **professional critic reviews**, **retail inventory**, **pricing**, and **general wine education**. It is built on LangGraph and acts as a single ReAct agent that orchestrates eleven tools — eight data/search tools (§3) plus the `reasoning_pair_wine`, `update_preferences`, and `ask_user_clarification` helpers.
+The BC Wine AI Agent is a domain-specific conversational assistant that answers questions about British Columbia (BC) wines by unifying data across **professional critic reviews**, **retail inventory**, **pricing**, and **general wine education**. It is built on LangGraph and acts as a single ReAct agent that orchestrates twelve tools — nine data/search tools (§3) plus the `reasoning_pair_wine`, `update_preferences`, and `ask_user_clarification` helpers.
 
 ### Target Users
 
@@ -69,7 +71,7 @@ The interface meets all of them at their level — the same chat surface answers
 ### Scope
 
 **In scope:**
-- Inventory lookup across 4 BC retailers + the government store.
+- Inventory lookup across 5 BC retailers + the government store.
 - Aggregated professional reviews (WineAlign + Gismondi).
 - Food pairing recommendations.
 - Wine education questions (regions, varietals, techniques).
@@ -132,11 +134,11 @@ The interface meets all of them at their level — the same chat surface answers
                     │  │  │  │  │  │  │  │
         ┌───────────┘  │  │  │  │  │  │  └──────────────┐
         ▼              ▼  ▼  ▼  ▼  ▼  ▼                  ▼
-   ┌─────────┐ ┌────────┐ ┌────────┐ ┌──────────┐ ... ┌─────────────┐
-   │bcliquor │ │marquis │ │okanagan│ │everything│     │ reasoning_  │
-   │         │ │        │ │cellars │ │_wine     │     │ pair_wine   │
-   └─────────┘ └────────┘ └────────┘ └──────────┘     │ (Flash)     │
-   ┌─────────┐ ┌─────────────┐ ┌──────────────┐       └─────────────┘
+   ┌─────────┐ ┌────────┐ ┌────────┐ ┌──────────┐ ┌──────┐ ┌─────────────┐
+   │bcliquor │ │marquis │ │okanagan│ │everything│ │legacy│ │ reasoning_  │
+   │         │ │        │ │cellars │ │_wine     │ │      │ │ pair_wine   │
+   └─────────┘ └────────┘ └────────┘ └──────────┘ └──────┘ │ (Flash)     │
+   ┌─────────┐ ┌─────────────┐ ┌──────────────┐            └─────────────┘
    │winealign│ │gismondi (DB)│ │tavily (web)  │
    │  AUTH   │ │ SQLite FTS5 │ │   AUTH       │
    └─────────┘ └─────────────┘ └──────────────┘
@@ -145,27 +147,9 @@ The interface meets all of them at their level — the same chat surface answers
    │  AUTH (JWT)  │
    └──────────────┘
                                       │
-                                      │ (tool results in messages)
-                                      ▼
-                       ┌─────────────────────────┐
-                       │  compact_tool_results    │
-                       │  Pure Python, no LLM     │
-                       │  - incremental merge     │
-                       │    into wine_context     │
-                       │  - LLM relevance filter  │
-                       │    (Gemini Flash) prunes │
-                       │    fuzzy mismatches      │
-                       │  - replace ToolMessages  │
-                       │    with top-20 projection│
-                       │    (same id → reducer    │
-                       │     replaces in place)   │
-                       │  - derive last_recs from │
-                       │    wine_context tail     │
-                       │  - pass-through Tavily /  │
-                       │    pair_wine / prefs     │
-                       └──────────────┬──────────┘
-                                      │ (loop back to orchestrator
-                                      │  for next ReAct round)
+                                      │ (raw tool results in messages —
+                                      │  no compaction, full fidelity)
+                                      │ (loop back to orchestrator)
                                       ▼
                        ┌─────────────────────────┐
                        │  ReAct Orchestrator      │
@@ -192,8 +176,8 @@ The interface meets all of them at their level — the same chat surface answers
 
 ### Edge Legend
 
-- The ReAct orchestrator self-loops via standard LangGraph ReAct semantics: each turn it may emit zero or more `tool_calls`. Those calls are dispatched in parallel by the `ToolNode`, results are appended to `messages`, and control returns to the orchestrator (via `compact_tool_results`). The loop exits when the orchestrator produces an AIMessage with no `tool_calls` — **that message is the final answer** (no synthesis/format pass).
-- `compact_tool_results` runs **after every** `tools` round (not once per turn); it also derives `last_recommendations`. The old `merge_results` and `format_response` nodes were removed.
+- The ReAct orchestrator self-loops via standard LangGraph ReAct semantics: each turn it may emit zero or more `tool_calls`. Those calls are dispatched in parallel by the `ToolNode`, raw results are appended to `messages`, and control returns directly to the orchestrator. The loop exits when the orchestrator produces an AIMessage with no `tool_calls` — **that message is the final answer** (no synthesis/format pass).
+- No compaction or intermediate processing between tool rounds — raw tool output goes directly to the orchestrator for maximum answer quality.
 - Checkpoints persist after every super-step.
 - LangSmith receives spans for every LLM call and tool call automatically when `LANGCHAIN_TRACING_V2=true`.
 
@@ -201,7 +185,7 @@ The interface meets all of them at their level — the same chat surface answers
 
 ## 3. Tool Inventory
 
-Eight data/search tools — all implemented. (Three more tools — `reasoning_pair_wine`, `update_preferences`, `ask_user_clarification` — are registered alongside these; see §4.6 and §9.) Specifications below match the shipping code.
+Nine data/search tools — all implemented. (Three more tools — `reasoning_pair_wine`, `update_preferences`, `ask_user_clarification` — are registered alongside these; see §4.6 and §9.) Specifications below match the shipping code.
 
 ### Summary Table
 
@@ -212,9 +196,10 @@ Eight data/search tools — all implemented. (Three more tools — `reasoning_pa
 | 3 | `everythingwine_tool.py` | Everything Wine (Vancouver) | none | `list[EverythingWineResult]` | ~2 s | Pickup/delivery availability |
 | 4 | `okanagan_cellars_tool.py` | Okanagan Cellars (Vancouver, 2 locations) | none | `list[OkanaganCellarsResult]` | ~1 s | Exact stock counts, large-format bottles |
 | 5 | `marquis_tool.py` | Marquis Wine Cellars (Vancouver, curated) | none | `tuple[list[MarquisResult], int]` | ~1 s | Curated picks, MSRP, hierarchical categories |
-| 6 | `tavily_tool.py` | Tavily web search API | required (paid) | `tuple[list[TavilyResult], str \| None]` | ~2 s | Pairings (niche cuisines), education, regions |
-| 7 | `gismondi_tool.py` | Anthony Gismondi reviews via local SQLite (FTS5) | none | `list[GismondiResult]` | < 100 ms | Canadian wine authority, deep tasting notes |
-| 8 | `robert_parker_tool.py` | Robert Parker Wine Advocate (Algolia API) | required (subscription) | `list[RobertParkerResult]` | ~1 s | World-class ratings, tasting notes, drink windows |
+| 6 | `legacy_tool.py` | Legacy Liquor Store (Vancouver, premium) | none | `tuple[list[LegacyResult], int]` | ~1 s | Premium selection, staff picks, price filters, stock qty |
+| 7 | `tavily_tool.py` | Tavily web search API | required (paid) | `tuple[list[TavilyResult], str \| None]` | ~2 s | Pairings (niche cuisines), education, regions |
+| 8 | `gismondi_tool.py` | Anthony Gismondi reviews via local SQLite (FTS5) | none | `list[GismondiResult]` | < 100 ms | Canadian wine authority, deep tasting notes |
+| 9 | `robert_parker_tool.py` | Robert Parker Wine Advocate (Algolia API) | required (subscription) | `list[RobertParkerResult]` | ~1 s | World-class ratings, tasting notes, drink windows |
 
 ### Per-Tool Detail
 
@@ -257,7 +242,7 @@ async def search_winealign(
 - User wants aging guidance.
 - User wants value-for-money analysis.
 
-**Notes:** ~2–5 s. Requires `WINEALIGN_EMAIL` / `WINEALIGN_PASSWORD` in `.env`. Auto-relogin on session expiry. Per-wine critic-review detail pages are fetched **concurrently** (`asyncio.gather` + `Semaphore(REVIEW_CONCURRENCY=6)`); the earlier serial loop with a 0.5 s delay per wine was this tool's bottleneck, so it was removed (~10× faster — 30 wines went from ~30 s to a warm ~4.6 s). No searchable JSON API exists: `/api/v1/wines` and `/api/v1/reviews` return JSON but ignore all query/filter params (full-catalog firehose), and the per-wine detail show endpoint 406s — so HTML parsing stays. **Limit:** the orchestrator must not call this more than twice per turn.
+**Notes:** ~2–5 s. Requires `WINEALIGN_EMAIL` / `WINEALIGN_PASSWORD` in `.env`. Auto-relogin on session expiry. Per-wine critic-review detail pages are fetched **concurrently** (`asyncio.gather` + `Semaphore(REVIEW_CONCURRENCY=10)`); the earlier serial loop with a 0.5 s delay per wine was this tool's bottleneck, so it was removed (~10× faster). No searchable JSON API exists: `/api/v1/wines` and `/api/v1/reviews` return JSON but ignore all query/filter params (full-catalog firehose), and the per-wine detail show endpoint 406s — so HTML parsing stays.
 
 ---
 
@@ -298,7 +283,7 @@ async def search_okanagan_cellars(query: str) -> list[OkanaganCellarsResult]
 ```python
 async def search_marquis(
     query: str,
-    limit: int = 30,
+    limit: int = 20,
     skip: int = 0,
 ) -> tuple[list[MarquisResult], int]   # (results, total_count)
 ```
@@ -314,7 +299,35 @@ async def search_marquis(
 
 ---
 
-#### 3.6 `search_tavily` — Web Search Fallback
+#### 3.6 `search_legacy` — Legacy Liquor Store (Vancouver, premium)
+
+```python
+async def search_legacy(
+    query: str,
+    limit: int = 30,
+    price_min: float | None = None,
+    price_max: float | None = None,
+    on_sale: bool | None = None,
+    staff_pick: bool | None = None,
+    country: str | None = None,
+    region: str | None = None,
+    tags: list[str] | None = None,
+) -> tuple[list[LegacyResult], int]   # (results, total_count)
+```
+
+**Unique value:** **Price range filtering** (`price_min`/`price_max`), **staff picks**, **sale items**, and **stock quantities** (`variants.quantity` sum). The only store tool with a GraphQL API — enables precise server-side filtering that other tools do with post-hoc client-side filtering.
+
+**When the orchestrator should call it:**
+- User asks about premium/curated wine selections in Vancouver.
+- User asks about sale items or deals (`on_sale=True`).
+- User wants staff-recommended wines (`staff_pick=True`).
+- Budget queries benefit from server-side `price_min`/`price_max` filtering.
+
+**Notes:** GraphQL API at `https://production-retail-store-api-hagnfhf3sq-uc.a.run.app/graphql` with store ID `"LL"`. URL pattern is `/product/{category}/{slug}` where category comes from the first tag slug (typically `"wine"`). `_clean_query()` converts smart quotes to regular apostrophes (does NOT strip them — Legacy's search needs apostrophes to match names like "Martin's Lane"). Returns stock quantity from `variants.quantity` sum.
+
+---
+
+#### 3.7 `search_tavily` — Web Search Fallback
 
 ```python
 async def search_tavily(
@@ -332,11 +345,11 @@ async def search_tavily(
 - User asks about a wine region, winemaking technique, or piece of wine history not covered by store tools.
 - All store tools return zero results for a queried wine name (disambiguation fallback).
 
-**Notes:** Requires `TAVILY_API_KEY`. Paid per request — the orchestrator should **call at most once per turn** and never as a first-line tool for inventory/pricing. The agent's `@tool` wrapper (`search_tavily_tool`) calls with `max_results=8`; the core `search_tavily` signature default is 5 (allowed range 1–10).
+**Notes:** Requires `TAVILY_API_KEY`. Paid per request — never as a first-line tool for inventory/pricing. The agent's `@tool` wrapper (`search_tavily_tool`) calls with `max_results=8`; the core `search_tavily` signature default is 5 (allowed range 1–10).
 
 ---
 
-#### 3.7 `search_gismondi` — Gismondi Reviews (SQLite + FTS5)
+#### 3.8 `search_gismondi` — Gismondi Reviews (SQLite + FTS5)
 
 ```python
 async def search_gismondi(
@@ -376,7 +389,7 @@ class GismondiResult(BaseModel):
 - `bc_only=True`: append `AND region LIKE '%British Columbia%'`.
 - `score_min` / `price_max` applied as additional `WHERE` clauses. When `price_max` is set, NULL-priced rows are excluded; when unset, all rows pass the price filter.
 - `grape` field: split the source string on ` - ` into a list.
-- Returns at most `limit` rows, ordered by `score_100 DESC, tasting_date DESC`. The agent's `@tool` wrapper (`search_gismondi_tool`) calls with `limit=20`; the core `search_gismondi` signature default is 10.
+- Returns at most `limit` rows, ordered by `score_100 DESC, tasting_date DESC`. The agent's `@tool` wrapper (`search_gismondi_tool`) calls with `limit=25`; the core `search_gismondi` signature default is 10.
 - `_search_sync()` (blocking) wrapped via `asyncio.to_thread()` so the async signature is honored without blocking the event loop.
 
 **Unique value:** Deep, single-expert (Anthony Gismondi) tasting notes for **Canadian-only** wines, with a far longer historical archive than what WineAlign returns for any single critic. Excellent for BC wine discovery.
@@ -390,7 +403,7 @@ class GismondiResult(BaseModel):
 
 ---
 
-#### 3.8 `search_robert_parker` — Robert Parker Wine Advocate
+#### 3.9 `search_robert_parker` — Robert Parker Wine Advocate
 
 ```python
 async def search_robert_parker(
@@ -456,7 +469,7 @@ class RobertParkerResult(BaseModel):
 - User wants global comparison — e.g., "how does this BC Pinot compare to Burgundy?"
 - Discovery queries for high-rated wines across any region.
 
-**Notes:** Requires an active subscription (~$99 USD/year). Auto-login handles token refresh transparently. **Limit:** the orchestrator should call at most once per turn.
+**Notes:** Requires an active subscription (~$99 USD/year). Auto-login handles token refresh transparently.
 
 ---
 
@@ -471,66 +484,36 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 
 
-class StorePrice(TypedDict):
-    store: str               # "bcliquor" | "marquis" | "okanagan" | "everythingwine"
-    price: float
-    on_sale: bool
-    in_stock: bool
-
-
-class MergedWineRecord(TypedDict):
-    normalized_key: str      # producer_slug + wine_slug + vintage
-    display_name: str
-    producer: str
-    vintage: int | None
-    prices: list[StorePrice]
-    best_price: StorePrice | None
-    critic_reviews: list[dict]   # combined winealign + gismondi + robert_parker
-    consumer_rating: float | None
-    is_bc_vqa: bool
-
-
-class UserPreferences(TypedDict, total=False):
-    budget_max: float
-    preferred_varietals: list[str]    # e.g., ["Riesling", "Pinot Noir"]
-    sweetness: str                    # "dry" | "off-dry" | "sweet"
-    style: str                        # "elegant" | "powerful" | "fresh"
-
-
 class AgentState(TypedDict):
-    # Required — managed by add_messages reducer
     messages: Annotated[list[BaseMessage], add_messages]
-
-    # Optional — populated as the conversation evolves
-    wine_context: NotRequired[dict[str, MergedWineRecord]]   # keyed by normalized_key
-    user_preferences: NotRequired[UserPreferences]
-    last_recommendations: NotRequired[list[str]]             # normalized_keys from previous turn
-    tool_call_log: NotRequired[list[dict]]                   # for tracing & dedup
+    tool_call_log: NotRequired[list[dict]]
 ```
 
-**Why these fields:**
-- `messages` — standard. `add_messages` reducer auto-appends and de-duplicates by id.
-- `wine_context` — the cross-tool merge cache, keyed for O(1) lookup in subsequent turns.
-- `user_preferences` — accumulates as the user reveals stable preferences; updated via the `update_preferences` tool (§9).
-- `last_recommendations` — enables reference resolution like "the second one".
+**Why this minimal state:**
+- `messages` — standard. `add_messages` reducer auto-appends and de-duplicates by id. Raw tool results stay in messages (no compaction) for maximum answer quality.
 - `tool_call_log` — diagnostic; also used to suppress redundant tool calls within a turn.
+
+> **Removed fields (2026-05):** `wine_context`, `user_preferences`, and `last_recommendations`
+> were removed when compaction was dropped. Multi-turn context is now managed by
+> `_filter_previous_turns()` which keeps only user questions and final AI answers from
+> previous turns, while preserving the current turn's full tool interaction in messages.
 
 ### 4.2 Nodes
 
 | Node | Type | Function | LLM call? |
 |---|---|---|---|
-| `orchestrator` | Custom Python wrapping `ChatGoogleGenerativeAI.bind_tools(TOOLS)` | Intent classification, tool selection, post-tool reasoning, **and final answer**. Temperature 0.2. Receives user prefs + cached `wine_context` summary + `last_recommendations` as system context. When the round budget is spent it binds **no** tools, forcing a prose final answer. | Yes — Gemini 3.5 Flash |
+| `orchestrator` | Custom Python wrapping `ChatGoogleGenerativeAI.bind_tools(TOOLS)` | Intent classification, tool selection, post-tool reasoning, **and final answer**. Temperature 0.2. When the round budget is spent it binds **no** tools, forcing a prose final answer. Uses `_filter_previous_turns()` to keep only Q&A from previous turns. | Yes — Gemini 3.5 Flash |
 | `tools` | `tool_node_with_logging` wrapping `ToolNode(TOOLS)` | Dispatches `tool_calls` to wrapped tool functions, then appends each call to `tool_call_log` (capped at last 50) for downstream auditing | No |
-| `compact_tool_results` | Custom Python (`compaction.py`) | Runs after every `tools` round. (1) Identifies this batch of ToolMessages (since last AIMessage). (2) Incrementally merges raw results into `wine_context` via `merge_tool_results` + `_merge_into_context`. (3) Runs an LLM relevance filter (Gemini Flash, fail-open) that drops entries clearly unrelated to the user query from `wine_context`. (4) Harvests `update_preferences` payloads. (5) Replaces each compactable ToolMessage with a same-id projection (top `MAX_COMPACT_TOP_N`=20 rows, key fields only, `results: []`). (6) Derives `last_recommendations` from the `wine_context` tail. The `add_messages` reducer replaces in place, so the **next orchestrator round sees far less raw JSON**. Pass-through: `search_tavily`, `reasoning_pair_wine`, `update_preferences`. See §8.9. | Mostly no (one Flash call for the relevance filter) |
 
-> **Removed nodes.** The `merge_results` (final pure-Python merge) and `format_response`
-> (LLM synthesis) nodes were deleted. `wine_context` is now built incrementally inside
-> `compact_tool_results`, and the orchestrator's no-`tool_calls` message **is** the final
-> answer — there is no separate synthesis/formatting pass.
+> **Removed nodes (2026-05).** `merge_results` (final pure-Python merge), `format_response`
+> (LLM synthesis), and `compact_tool_results` (in-loop compaction) were all deleted. Raw tool
+> output goes directly back to the orchestrator — answer quality testing showed this produces
+> better answers (verbatim critic quotes, multi-store pricing) at an acceptable context cost
+> (~300K chars/turn well within Gemini Flash's 1M context window).
 
 #### Tool-rounds safety net
 
-`orchestrator_node` enforces a soft cap of `MAX_TOOL_ROUNDS = 5` data-tool rounds per user turn (counted as AIMessages-with-tool_calls since the most recent HumanMessage; clarification-only rounds are excluded). Once the budget is reached, the orchestrator is re-invoked **with no tools bound**, so it cannot request more data and must write the final answer from `wine_context`, the tool results already gathered, and `user_preferences`. This is the turn's termination guarantee now that there's no separate synthesis node — it replaces the old `should_continue` short-circuit to `merge_results`.
+`orchestrator_node` enforces a soft cap of `MAX_TOOL_ROUNDS = 6` data-tool rounds per user turn (counted as AIMessages-with-tool_calls since the most recent HumanMessage; clarification-only rounds are excluded). The prompt instructs ≤5 rounds; the code uses 6 as a buffer. Once the budget is reached, the orchestrator is re-invoked **with no tools bound**, so it cannot request more data and must write the final answer from the tool results already gathered.
 
 ### 4.3 Edges
 
@@ -538,8 +521,7 @@ class AgentState(TypedDict):
 START
   └→ orchestrator
        ├→ tools  (if the orchestrator emitted tool_calls)
-       │    └→ compact_tool_results
-       │         └→ orchestrator  (ReAct self-loop — now over compact messages)
+       │    └→ orchestrator  (ReAct self-loop — raw tool results)
        └→ END    (when orchestrator emits an AIMessage with no tool_calls —
                   that message IS the final answer)
 ```
@@ -561,16 +543,17 @@ graph = builder.compile(checkpointer=checkpointer)
 
 ### 4.5 Tool Registration
 
-Tools are decorated with `@tool` (from `langchain_core.tools`). Each tool's docstring is what the orchestrator sees as the tool description — these docstrings must mirror the "When the orchestrator should call it" guidance in §3. The graph is a **custom `StateGraph`** (`build_graph()` in `agent.py`), not `create_react_agent`: the orchestrator node binds `TOOLS` itself and a custom `ToolNode(TOOLS)` executes them, so the compaction node can sit on the loop-back edge.
+Tools are decorated with `@tool` (from `langchain_core.tools`). Each tool's docstring is what the orchestrator sees as the tool description — these docstrings must mirror the "When the orchestrator should call it" guidance in §3. The graph is a **custom `StateGraph`** (`build_graph()` in `agent.py`), not `create_react_agent`: the orchestrator node binds `TOOLS` itself and a custom `ToolNode(TOOLS)` executes them.
 
 ```python
-# agent.py — eleven tools registered
+# agent.py — twelve tools registered
 TOOLS = [
     search_bcliquor_tool,
     search_winealign_tool,
     search_everything_wine_tool,
     search_okanagan_cellars_tool,
     search_marquis_tool,
+    search_legacy_liquor_store_tool,
     search_gismondi_tool,
     search_robert_parker_tool,
     search_tavily_tool,
@@ -579,15 +562,13 @@ TOOLS = [
     ask_user_clarification_tool,
 ]
 
-# build_graph(): orchestrator → tools → compact_tool_results → orchestrator (loop)
+# build_graph(): orchestrator → tools → orchestrator (loop)
 builder = StateGraph(AgentState)
 builder.add_node("orchestrator", orchestrator_node)   # binds TOOLS (none when over budget)
 builder.add_node("tools", tool_node_with_logging)     # ToolNode(TOOLS)
-builder.add_node("compact_tool_results", compact_tool_results_node)
 builder.set_entry_point("orchestrator")
 builder.add_conditional_edges("orchestrator", should_continue, {"tools": "tools", "end": END})
-builder.add_edge("tools", "compact_tool_results")
-builder.add_edge("compact_tool_results", "orchestrator")
+builder.add_edge("tools", "orchestrator")
 ```
 
 > A `safe_tool` decorator exists in `safety.py` and `SAFE_TOOLS = [safe_tool(t) for t in TOOLS]`
@@ -608,7 +589,7 @@ When the user's query or the available data is genuinely ambiguous, the orchestr
 
 **Anti-triggers.** Don't ask when a reasonable default exists from `user_preferences` or `wine_context`, when "here are ~5 picks across styles" is a fine answer, or for informational/educational queries. Don't stall by clarifying instead of answering.
 
-**Round counting.** A round whose `tool_calls` are **all** `ask_user_clarification_tool` is excluded from `_count_tool_rounds_this_turn`, so clarifications don't push the orchestrator toward the `MAX_TOOL_ROUNDS = 5` data-tool safety stop. A separate counter `_count_clarifications_this_turn` enforces `MAX_CLARIFICATIONS_PER_TURN = 3`. When the cap is reached, `orchestrator_node` appends a "clarification cap reached — proceed with best-effort answer" line to the system prompt so the model stops asking and writes its final answer.
+**Round counting.** A round whose `tool_calls` are **all** `ask_user_clarification_tool` is excluded from `_count_tool_rounds_this_turn`, so clarifications don't push the orchestrator toward the `MAX_TOOL_ROUNDS = 6` data-tool safety stop. A separate counter `_count_clarifications_this_turn` enforces `MAX_CLARIFICATIONS_PER_TURN = 3`. When the cap is reached, `orchestrator_node` appends a "clarification cap reached — proceed with best-effort answer" line to the system prompt so the model stops asking and writes its final answer.
 
 **Validation skip on resume.** Short clarification replies like "$50 under" or "the cheaper one" could trip the off-topic validator. `app.py` detects resume turns via `aget_state(config).interrupts` and skips the validation gate in that branch — the message is already in-context as a clarification reply.
 
@@ -636,7 +617,7 @@ Every node and sub-LLM in the agent uses **`gemini-3.5-flash`** for now. This in
 
 > `get_llm()` sets only `temperature` — **no `max_output_tokens`** is configured anywhere, so
 > every call uses the model's default output ceiling. The only length control in the system is
-> the soft `Under 350 words` instruction in the `reasoning_pair_wine` prompt; the orchestrator's
+> the soft `Under 777 words` instruction in the `reasoning_pair_wine` prompt; the orchestrator's
 > final answer has no word/token cap.
 
 Cost-tier optimization (cheaper models for cheap nodes, more expensive for reasoning) is **deferred**. Picking a single model keeps the graph simple to build, test, and reason about. If a follow-up engineer wants to swap models per node later, the only file that changes is the model factory (`models.py`).
@@ -708,11 +689,11 @@ Signature varietals: Riesling, Pinot Noir, Chardonnay, Pinot Gris, Syrah, Gamay,
 
 The catalog is intentionally **lean** — one short line per tool with signature, the key data it returns, and (where load-bearing) a speed hint. Example (current entry for `search_winealign`):
 
-> *`search_winealign_tool(query, max_pages=3, include_reviews=True)` — Multi-critic reviews (Szabo, d'Amato, Gismondi, ...) with scores, tasting notes, drink windows. Slow (3–10s);*
+> *`search_winealign_tool(query, max_pages=3, include_reviews=True)` — Multi-critic reviews (Szabo, d'Amato, Gismondi, ...) with scores, tasting notes, drink windows. Slow (3–10s).*
 
 Each catalog line carries just signature + returns + an optional speed cue. The heavier guidance lives where it's actually enforced, not repeated in the catalog:
 
-- **Per-turn call limits** (WineAlign ≤2/turn, Robert Parker ≤1/turn) live in each tool's **docstring** (which the orchestrator also reads) and the overall data-tool budget is Hard Constraint **C3** (≤4 rounds / ≤12 calls).
+- The overall data-tool budget is Hard Constraint **C3** (≤5 rounds / ≤20 calls). No per-tool frequency limits.
 - **When-to-call triggers** are in each tool's docstring.
 - **Auth / latency specifics** are documented per tool in §3 (Tool Inventory).
 
@@ -730,13 +711,13 @@ A leading **Response Language** directive precedes both tiers: respond in the us
 |---|---|---|
 | **C1** | **Never invent** producers, vintages, scores, prices, retailers, or URLs. If a tool didn't return it, you don't have it — say so plainly. No recall from training. | Orchestrator prompt's C1 + `merge.py` dedupes by tool source; the orchestrator only sees compacted tool rows + the `wine_context` summary, all tool-sourced |
 | **C2** | **Tavily is forbidden for inventory/pricing.** Use it ONLY for non-Western cuisine pairings, educational/regional questions, or disambiguation when ALL store tools come back empty. Tavily fabricates retailer URLs (Legacy Liquor, ZYN.ca, BSW Liquor have all leaked through historically). | None — prompt-only |
-| **C3** | **Tool budget per user turn.** Data tools (store + critic searches): ≤4 rounds total, ≤12 calls total. Clarification calls: ≤3 per turn, tracked separately, do NOT count against the data-tool budget. | `MAX_TOOL_ROUNDS = 5` in `agent.py:orchestrator_node` (binds **no** tools once exceeded → forces the final answer), `MAX_CLARIFICATIONS_PER_TURN = 3` in `agent.py:orchestrator_node` |
+| **C3** | **Tool budget per user turn.** Data tools (store + critic searches): ≤5 rounds total, ≤20 calls total. Clarification calls: ≤3 per turn, tracked separately, do NOT count against the data-tool budget. | `MAX_TOOL_ROUNDS = 6` in `agent.py:orchestrator_node` (binds **no** tools once exceeded → forces the final answer), `MAX_CLARIFICATIONS_PER_TURN = 3` in `agent.py:orchestrator_node` |
 
 #### Guidelines
 
 | ID | Rule |
 |---|---|
-| **G1** | **Parallelize.** Inventory/pricing queries → fan out store tools (bcliquor + marquis + okanagan + everythingwine) in one round. Critic queries → fan out critic tools. Serial calls cost the user latency. |
+| **G1** | **Parallelize.** Inventory/pricing queries → fan out store tools (bcliquor + marquis + okanagan + everythingwine + legacy) in one round. Critic queries → fan out critic tools. Serial calls cost the user latency. |
 | **G2** | **Attribute and link.** Critics by name + source; stores by name. Markdown link with the tool-returned URL whenever present — the orchestrator needs these for the where-to-buy listings (URLs survive into the compact projection so they aren't fabricated). |
 | **G3** | **Multi-turn state.** Resolve "the second one" / "the cheaper one" / "tell me more" against `last_recommendations` and `wine_context`. Don't re-recommend a wine the user already saw without acknowledging it. |
 | **G4** | **Calibrate depth to audience.** Beginner vocabulary → friendly, jargon-light. Sommelier vocabulary → full critic detail. |
@@ -810,12 +791,13 @@ Trigger: user asks about price, availability, or "where can I buy X".
 
 ```
 t=0   User: "Where can I buy CheckMate Chardonnay 2019 in BC?"
-t=0   orchestrator emits 4 tool_calls in one AIMessage:
+t=0   orchestrator emits 5 tool_calls in one AIMessage:
           ├── search_bcliquor("CheckMate Chardonnay 2019")
           ├── search_marquis("CheckMate Chardonnay 2019")
           ├── search_okanagan_cellars("CheckMate Chardonnay 2019")
-          └── search_everything_wine("CheckMate Chardonnay 2019")
-t=~1  All 4 ToolMessages return in parallel (~1–2s wall time)
+          ├── search_everything_wine("CheckMate Chardonnay 2019")
+          └── search_legacy_liquor_store("CheckMate Chardonnay 2019")
+t=~1  All 5 ToolMessages return in parallel (~1–2s wall time)
 t=~1  orchestrator emits AIMessage with no tool_calls → that message is the answer → END
 ```
 
@@ -840,8 +822,8 @@ Trigger: all store tools return empty.
 
 ```
 t=0   User: "Do you carry Niche 2021 Pinot Blanc?"
-t=0   orchestrator fans out to 4 store tools in parallel
-t=~1  All 4 return empty
+t=0   orchestrator fans out to 5 store tools in parallel
+t=~1  All 5 return empty
 t=~1  orchestrator calls: search_tavily("Niche 2021 Pinot Blanc BC wine")
 t=~3  Tavily returns AI summary: "Niche Wine Company, Lake Country BC — Pinot Blanc 2021"
 t=~3  orchestrator retries with corrected name:
@@ -891,12 +873,12 @@ def normalize(name: str, producer: str | None = None) -> tuple[str, str, int | N
 from pydantic import BaseModel
 
 class StorePrice(BaseModel):
-    store: str               # "bcliquor" | "marquis" | "okanagan" | "everythingwine"
+    store: str               # "bcliquor" | "marquis" | "okanagan" | "everythingwine" | "legacy"
     price: float
     on_sale: bool = False
     in_stock: bool = True
     url: str | None = None
-    stock_qty: int | None = None  # if store provides it (okanagan)
+    stock_qty: int | None = None  # if store provides it (okanagan, legacy)
 
 class CriticReviewMerged(BaseModel):
     source: str              # "winealign" | "gismondi"
@@ -991,58 +973,16 @@ def merge_tool_results(messages: list[BaseMessage]) -> dict[str, MergedWine]:
 
 Called from `compact_tool_results_node` (§8.9) on each individual tool batch, so `wine_context` is built incrementally during the ReAct loop. (Historically it was also called from a final `merge_results` node; that node was removed.)
 
-### 8.9 In-Loop Compaction (`compaction.py`)
+### 8.9 Compaction (Removed)
 
-A separate node, `compact_tool_results_node`, sits between `tools` and the loop-back to `orchestrator`. Two responsibilities:
-
-**(a) Incremental wine_context merge.** Calls `merge_tool_results` on just this round's `ToolMessage` batch and folds the result into `state["wine_context"]` via `_merge_into_context` — which extends `prices` / `critic_reviews` on duplicate `normalized_key` entries (instead of overwriting) and recomputes `best_price` after the extension. The facts the orchestrator's final answer reads (injected as a `wine_context` summary into the system prompt) are therefore ready by the time the loop exits.
-
-**(b) ToolMessage compaction.** For each compactable ToolMessage, emits a replacement with the **same `id`** so the LangGraph `add_messages` reducer overwrites in place. The replacement content is a small projection:
-
-```json
-{
-  "status": "ok",
-  "tool": "search_bcliquor",
-  "compacted": true,
-  "result_count": 24,
-  "top_results": [
-    {"name": "...", "price": 34.99, "in_stock": true, "vintage": 2021}
-  ],
-  "results": []
-}
-```
-
-Two invariants baked into the payload:
-
-1. `results: []` — so any later call to `merge_tool_results` over the message list iterates an empty array and produces no records, leaving the already-populated `wine_context` untouched.
-2. Top-N (default **20**, constant `MAX_COMPACT_TOP_N`) carries only the fields the orchestrator needs to decide next-round actions and to write the answer: name + price + in_stock + vintage + url for store tools; name + score + critic + vintage + url for critic tools. Tasting notes, descriptions, store counts are dropped from the orchestrator's view but remain in `wine_context` for the final answer.
-
-**Pass-through tools.** Three tools are NOT compacted because their raw payload is small *and* has downstream consumers that need it intact:
-
-| Tool | Why pass-through |
-|---|---|
-| `search_tavily` | Long prose `answer` + result snippets. Left intact so the orchestrator reads the full web answer when writing its response. |
-| `reasoning_pair_wine` | Long sommelier prose. Left intact so the orchestrator can fold the pairing reasoning into its answer. |
-| `update_preferences` | Small echo payload that `compact_tool_results_node` harvests into `user_preferences` (`_harvest_preferences`). |
-
-**Tool projections** (per `_project_store_row` / `_project_critic_row` in `compaction.py`):
-
-| Tool | Projection fields |
-|---|---|
-| `search_bcliquor`, `search_marquis`, `search_okanagan_cellars`, `search_everything_wine` | `name`, `price`, `in_stock`, `vintage` |
-| `search_winealign` | `wine_name`, top critic score, critic name, vintage |
-| `search_gismondi` | `title`, `score_100`/100, taster, vintage |
-| `search_robert_parker` | `display_name`, top reviewer rating, reviewer, vintage |
-
-**Why deterministic (no LLM) compaction.** Adding an LLM call between every tool round would (a) add ~1–2 s latency per round, (b) introduce a new failure surface inside the ReAct loop, and (c) risk lossy summaries that prevent the orchestrator from making accurate round-2 decisions. A fixed-shape Python projection avoids all three.
-
-**Stability invariants.** Verified end-to-end:
-
-- SSE `on_tool_end` event in `app.py` fires from the LangGraph tool node, **before** compaction runs. Frontend tool-badge dropdowns still show real tool output.
-- `_count_tool_rounds_this_turn` / `should_continue` count AIMessages, not ToolMessages — unaffected by content replacement.
-- `MAX_TOOL_ROUNDS=5` safety net (orchestrator binds no tools once exceeded) — unaffected.
-- Off-topic / no-tool-call paths never enter the compaction node.
-- Multi-turn reference resolution: `compact_tool_results_node` derives `last_recommendations` from `list(wine_context.keys())[-10:]` (insertion order — newest at tail).
+> **Historical note:** A `compact_tool_results` node previously sat between `tools` and the
+> loop-back to `orchestrator`. It incrementally merged tool results into `wine_context` and
+> replaced raw ToolMessages with top-20 projections to reduce context size. This was removed
+> in 2026-05 after A/B testing showed that passing raw tool output directly to the orchestrator
+> produces significantly better answers: verbatim critic quotes, complete multi-store pricing,
+> and accurate tasting notes that the projection was stripping. The context cost (~300K chars
+> per turn with ≤5 rounds / ≤20 calls) is well within Gemini Flash's 1M token context window.
+> `compaction.py` still exists on disk but is no longer imported or used in the graph.
 
 ---
 
@@ -1053,30 +993,24 @@ Two invariants baked into the payload:
 - `InMemorySaver` (LangGraph) — process-local; survives across HTTP requests but cleared on server restart. The `SqliteSaver` upgrade for durable persistence is still on the roadmap.
 - Thread ID = UUID generated server-side by `POST /api/session`. The frontend mints a **new** thread_id every time the chat overlay is opened and does *not* persist it in `localStorage` — this scopes the agent's `wine_context` cache to one open/close cycle of the chat. (See §13 for the rationale: prior builds persisted the thread_id across reloads, and `wine_context` accumulated indefinitely, causing wines from earlier unrelated queries to leak into new conversations.)
 - Within a single open chat the thread_id is stable, so follow-up turns ("what about the 2022 vintage?") still share memory.
-- Persistence covers `messages`, `wine_context`, `user_preferences`, `last_recommendations`, `tool_call_log`.
+- Persistence covers `messages` and `tool_call_log`.
 
 ### 9.2 What Survives Turns
 
 | State Key | Survives? | Use |
 |---|---|---|
-| `messages` | Yes | Full chat history; LangGraph compaction may trim per its policy |
-| `wine_context` | Yes | Cross-turn cache of merged wine records |
-| `user_preferences` | Yes | Budget, varietals, dryness preference |
-| `last_recommendations` | Yes (overwritten each turn) | List of `normalized_key` strings ordered as they appeared in the last response |
+| `messages` | Yes | Full chat history; `_filter_previous_turns()` trims tool interactions from previous turns |
 | `tool_call_log` | Yes (capped at last N=50) | Diagnostic + suppression of redundant calls within a turn |
 
 ### 9.3 Reference Resolution
 
 When the user says **"the second one"**, **"the cheaper one"**, or **"tell me more"**:
 
-1. The orchestrator inspects `state["last_recommendations"]` (passed in as part of the system message).
-2. It resolves the referenced wine's `normalized_key`.
-3. It looks up the full record in `state["wine_context"][key]`.
-4. It can serve the answer immediately if the cached data suffices, or selectively re-query specific tools for missing details (e.g., re-fetch WineAlign reviews if they weren't included originally).
+1. The orchestrator sees the previous turn's final answer in the filtered conversation history (user question + AI answer only, no tool interactions).
+2. It resolves the referenced wine from context.
+3. It can re-query tools if needed for more detail.
 
-The orchestrator's system prompt includes an instruction:
-
-> *"Before searching, check `wine_context` for the wine the user is referencing. If it's already in memory, use it. Only re-query tools when the user explicitly asks for fresh data or when the cached entry lacks the requested field."*
+The orchestrator's system prompt (G3) instructs it to use conversation history to resolve references.
 
 ### 9.4 Preference Inference
 
@@ -1100,9 +1034,9 @@ async def update_preferences(
 
 The orchestrator's system prompt instructs it to call this only on **stable** preferences — not on ad-hoc filters within a single turn.
 
-### 9.5 Why Not Just Raw History?
+### 9.5 Multi-Turn Message Filtering
 
-LangGraph may compact the message history under context pressure. Critical state (preferences, wine cache) should be in **structured state**, not in the message log, to survive compaction.
+`_filter_previous_turns()` in `agent.py` manages context for multi-turn conversations. For previous turns it keeps only `HumanMessage` + final `AIMessage` (no tool_calls), dropping all tool interactions. The current turn is preserved in full so the orchestrator can see all tool results. This keeps the context window manageable without losing conversational continuity.
 
 ---
 
@@ -1331,14 +1265,18 @@ A friendly-label map lives in the frontend (`app.js`):
 
 ```javascript
 const TOOL_LABELS = {
-  search_bcliquor: "BC Liquor inventory",
-  search_winealign: "WineAlign critic reviews",
-  search_everything_wine: "Everything Wine availability",
-  search_okanagan_cellars: "Okanagan Cellars stock",
-  search_marquis: "Marquis curated selection",
-  search_tavily: "Web reference",
-  search_gismondi: "Gismondi tasting notes",
-  reasoning_pair_wine: "Sommelier reasoning",
+  search_bcliquor_tool: "BC Liquor Store",
+  search_winealign_tool: "WineAlign",
+  search_everything_wine_tool: "Everything Wine",
+  search_okanagan_cellars_tool: "Okanagan Cellars",
+  search_marquis_tool: "Marquis Wine Cellars",
+  search_legacy_liquor_store_tool: "Legacy Liquor Store",
+  search_tavily_tool: "Web Search",
+  search_gismondi_tool: "Gismondi On Wine",
+  search_robert_parker_tool: "Robert Parker",
+  reasoning_pair_wine_tool: "Wine Pairing",
+  update_preferences_tool: "Preferences",
+  ask_user_clarification_tool: "Clarification",
 };
 ```
 
@@ -1579,7 +1517,7 @@ Everything, by default. No selective tracing is needed at this stage. Specifical
 - An overall trace named after the user's input (the first user message of the turn).
 - A child span per ReAct iteration (orchestrator model invocation) — the final iteration is the answer.
 - A child span per tool call.
-- The `compact_tool_results` node as a span (including its Gemini Flash relevance-filter call).
+- Each tool round's results flowing directly back to the orchestrator.
 
 ### 14.4 Custom Metadata
 
@@ -1618,7 +1556,7 @@ Build order (each item assumes the prior items are done):
 | 9 | `static/index.html` + `static/styles.css` + `static/app.js` | ✅ Done | Frontend chat UI in SUM AI design language | 1.5 days |
 | 10 | `tests/golden_queries.py` + `tests/test_agent.py` | ☐ | 12+ golden queries, assertions, LLM-as-judge | 1 day |
 | 11 | `validation.py` | ✅ Done | Pre-agent query validation gate (off-topic → SSE rejection, skip graph). See §12.6. | 0.25 day |
-| 12 | `compaction.py` | ✅ Done | In-loop tool-result compaction node: incremental `wine_context` merge + same-id ToolMessage replacement. See §8.9. | 0.25 day |
+| 12 | `legacy_tool.py` | ✅ Done | Legacy Liquor Store search via GraphQL API. See §3.6. | 0.5 day |
 | 13 | `docs/DEPLOYMENT.md` | ☐ | Deploy notes (Docker, env vars, hosting target) | 0.5 day |
 
 ### 15.1 Critical Path
@@ -1695,7 +1633,7 @@ python -m tests.quality_eval --skip-judge             # deterministic metrics on
 
 For each turn, the eval computes:
 
-- **Tool orchestration** — precision / recall / F1 against `expected_tools_*`, plus `forbidden_called` and per-turn-limit checks (`search_winealign ≤ 2`, `search_robert_parker ≤ 1`, `search_tavily ≤ 1`). Tool names are normalized via `_strip_tool_suffix` so the binding's `_tool` suffix doesn't trip the comparison.
+- **Tool orchestration** — precision / recall / F1 against `expected_tools_*`, plus `forbidden_called`. Tool names are normalized via `_strip_tool_suffix` so the binding's `_tool` suffix doesn't trip the comparison.
 - **Hallucination** — for each declared field family (winery / score / vintage / price), check whether the response's mention appears verbatim in at least one tool result.
 - **Coverage** — distinct stores cited (for buyability queries), distinct critics cited (for review queries).
 - **Output contract** — regex-checked presence of Lead / "Why this wine" / "Where to buy" table / "Pairing note". Bullet-list fallback for the table is accepted when the section names ≥ 2 known stores with prices.
@@ -1741,6 +1679,7 @@ Patterns visible in the trajectory:
 - **Pure prompt iteration hit diminishing returns around R3–R4**. The single biggest jump in deterministic metrics (R4 → R5, tool orch 11% → 89%) was an unblocking code fix, not a prompt tweak.
 - **Synthesis rule pressure is multi-objective and unstable.** Tightening anti-hallucination simultaneously suppresses helpful alternatives; loosening it brings back fabricated wineries. The yo-yo on Judge overall between R5 and R8 is the visible signature of that trade-off.
 - **Code-level safety nets compound cleanly.** `MAX_TOOL_ROUNDS`, the metric's `_strip_tool_suffix`, and Gismondi's synthetic StorePrice are independent improvements that each lifted a specific failure mode without regressing another.
+- **Compaction removal (post-R8).** A/B testing showed raw tool output produces better answers than compacted projections. Context cost (~300K chars/turn) is within Gemini Flash's 1M context. This was the last major architectural change in this series.
 
 The next category of wins is **architectural rather than prompt-level** — see §18.2 for candidates (query-type routing, stricter merge fuzzy matching, deterministic table rendering).
 
@@ -1869,13 +1808,13 @@ BC-wine-ai-agents/
 ├── ✅ merge.py                    # Normalize + dedup logic
 ├── ✅ safety.py                   # safe_tool decorator
 ├── ✅ validation.py               # Pre-agent query validation gate (§12.6)
-├── ✅ compaction.py               # In-loop tool-result compaction node (§8.9)
 ├── ✅ app.py                      # FastAPI entry point
 ├── ✅ bcliquor_tool.py
 ├── ✅ winealign_tool.py
 ├── ✅ everythingwine_tool.py
 ├── ✅ okanagan_cellars_tool.py
 ├── ✅ marquis_tool.py
+├── ✅ legacy_tool.py              # §3.6 — Legacy Liquor Store (GraphQL)
 ├── ✅ tavily_tool.py
 ├── ✅ gismondi_tool.py            # §3.7
 ├── ✅ robert_parker_tool.py       # §3.8
