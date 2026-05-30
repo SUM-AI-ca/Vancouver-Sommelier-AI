@@ -12,9 +12,8 @@ function initTurnstile() {
   if (typeof turnstile === "undefined" || document.getElementById("cf-turnstile")) return;
   const container = document.createElement("div");
   container.id = "cf-turnstile";
-  container.style.cssText = "display:flex;justify-content:center;padding:0.5rem 0";
-  const inputArea = document.querySelector(".chat-input-area");
-  inputArea.parentNode.insertBefore(container, inputArea);
+  container.style.cssText = "position:fixed;bottom:5rem;right:1rem;z-index:10000";
+  document.body.appendChild(container);
   turnstileWidgetId = turnstile.render("#cf-turnstile", {
     sitekey: TURNSTILE_SITE_KEY,
     callback: (token) => { turnstileToken = token; },
