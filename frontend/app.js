@@ -1,8 +1,6 @@
 /* BC Wine — SSE chat client */
 
-const API_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-  ? ""
-  : "https://bc-wine-agent-135257828500.us-west1.run.app";
+const API_BASE = "";
 
 const TURNSTILE_SITE_KEY = "0x4AAAAAACk40fbVxvRdolMx";
 let turnstileToken = null;

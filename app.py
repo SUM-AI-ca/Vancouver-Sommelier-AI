@@ -47,17 +47,30 @@ def _log_langsmith_status() -> None:
 
 _log_langsmith_status()
 
+PROXY_SECRET = os.getenv("PROXY_SECRET", "")
+
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="BC Wine AI Agent")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.middleware("http")
+async def verify_proxy_secret(request: Request, call_next):
+    """Block direct Cloud Run access. Only requests from the Cloudflare
+    Pages Function proxy (which injects X-Proxy-Secret) are accepted.
+    Skipped when PROXY_SECRET is not set (local development)."""
+    if PROXY_SECRET and request.url.path.startswith("/api/"):
+        if request.headers.get("X-Proxy-Secret") != PROXY_SECRET:
+            return JSONResponse(status_code=403, content={"error": "Direct access not allowed"})
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://wineaiagent.com",
         "https://www.wineaiagent.com",
-        "https://bcwineaiagents.juhyun5328-b18.workers.dev",
         "http://localhost:8000",
     ],
     allow_methods=["*"],
