@@ -7,6 +7,7 @@ import uuid
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
@@ -43,6 +44,18 @@ def _log_langsmith_status() -> None:
 _log_langsmith_status()
 
 app = FastAPI(title="BC Wine AI Agent")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://wineaiagent.com",
+        "https://www.wineaiagent.com",
+        "https://bcwineaiagents.pages.dev",
+        "http://localhost:8000",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Cap attached images per turn (matches the frontend limit).
 MAX_IMAGES = 2
