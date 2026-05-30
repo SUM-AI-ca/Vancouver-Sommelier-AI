@@ -7,6 +7,7 @@ const TOOL_LABELS = {
   search_okanagan_cellars_tool: "Okanagan Cellars",
   search_marquis_tool: "Marquis Wine Cellars",
   search_legacy_liquor_store_tool: "Legacy Liquor Store",
+  search_liberty_wine_tool: "Liberty Wine Merchants",
   search_tavily_tool: "Web Search",
   search_gismondi_tool: "Gismondi On Wine",
   search_robert_parker_tool: "Robert Parker",
@@ -28,10 +29,7 @@ const attachBtn = $("#chat-attach");
 const fileInput = $("#chat-file");
 const attachmentsEl = $("#chat-attachments");
 
-// Image attachment limits (mirror the server's MAX_IMAGES). Photos are
-// downscaled + re-encoded to JPEG client-side before upload, so a 12MP phone
-// shot doesn't balloon the request or the model's token bill.
-const MAX_IMAGES = 3;
+const MAX_IMAGES = 2;
 const MAX_DIM = 2048; // longest edge, px — high enough for small wine-list text
 let attachedImages = []; // data-URL strings, pending send
 
@@ -496,19 +494,11 @@ function escapeAttr(str) {
 /* ── Save as PDF ────────────────────────────────── */
 
 function saveAsPdf() {
-  const messages = messagesEl.querySelectorAll(".chat-message, .tool-badge");
+  const messages = messagesEl.querySelectorAll(".chat-message");
   if (!messages.length) return;
 
   const lines = [];
   messages.forEach((el) => {
-    if (el.classList.contains("tool-badge")) {
-      const label = el.querySelector(".tool-badge-label");
-      const count = el.querySelector(".tool-badge-count");
-      if (label) {
-        lines.push(`<div class="pdf-tool">${escapeHtml(label.textContent)}${count ? " — " + escapeHtml(count.textContent) : ""}</div>`);
-      }
-      return;
-    }
     const isUser = el.classList.contains("user");
     const role = isUser ? "You" : "BC Wine AI";
     lines.push(`<div class="pdf-msg ${isUser ? "pdf-user" : "pdf-ai"}"><span class="pdf-role">${role}</span>${el.innerHTML}</div>`);

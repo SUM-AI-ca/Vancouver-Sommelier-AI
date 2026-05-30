@@ -14,7 +14,7 @@ import time
 import httpx
 from pydantic import BaseModel
 
-from query_fallback import search_with_fallback
+from .query_fallback import search_with_fallback
 
 
 # ── Config ──────────────────────────────────────────────────────────
