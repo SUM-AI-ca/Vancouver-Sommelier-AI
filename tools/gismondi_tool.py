@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 # ── Config ──────────────────────────────────────────────────────────
 
-DB_PATH = Path(__file__).parent / "data" / "wines.db"
+DB_PATH = Path(__file__).resolve().parent.parent / "data" / "wines.db"
 
 
 # ── Data Model ──────────────────────────────────────────────────────

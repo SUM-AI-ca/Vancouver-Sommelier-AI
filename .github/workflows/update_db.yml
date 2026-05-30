@@ -2,8 +2,8 @@ name: Update Wine Database
 
 on:
   schedule:
-    # Run Tue/Thu/Sat at 02:00 UTC (2 hours after submodule scraper runs Mon/Wed/Fri)
-    - cron: '0 2 * * 2,4,6'
+    # Run Wed/Sat at 02:00 UTC
+    - cron: '0 2 * * 3,6'
   workflow_dispatch:
 
 env:
@@ -32,7 +32,7 @@ jobs:
         python-version: '3.12'
 
     - name: Build database
-      run: python build_db.py
+      run: python scripts/build_db.py
 
     - name: Commit and push if changed
       run: |

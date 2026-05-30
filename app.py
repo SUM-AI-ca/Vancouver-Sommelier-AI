@@ -7,7 +7,7 @@ import uuid
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
@@ -44,9 +44,8 @@ _log_langsmith_status()
 
 app = FastAPI(title="BC Wine AI Agent")
 
-# Cap attached images per turn (matches the frontend limit). Wine lists can span
-# 2 photos; 3 leaves headroom without inviting token blow-ups.
-MAX_IMAGES = 3
+# Cap attached images per turn (matches the frontend limit).
+MAX_IMAGES = 2
 
 _graph = None
 
@@ -430,9 +429,4 @@ async def health():
     return {"ok": True}
 
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
-@app.get("/")
-async def index():
-    return FileResponse("static/index.html")
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

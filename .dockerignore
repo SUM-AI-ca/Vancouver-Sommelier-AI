@@ -1,0 +1,15 @@
+.git/
+.github/
+.claude/
+.gstack/
+gismondi-canada-wines/
+tests/
+docs/
+scripts/
+__pycache__/
+*.pyc
+.env
+.gitmodules
+README.md
+Dockerfile
+.dockerignore
