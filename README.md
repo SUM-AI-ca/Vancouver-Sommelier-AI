@@ -2,7 +2,7 @@
 
 BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으로 여러 와인 사이트의 데이터를 통합해서 사용자 질문에 답변하는 게 최종 목표.
 
-현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + 와인 컬러 풀스크린 채팅 UI 동작 중. Pre-agent query validation gate 추가 (off-topic 쿼리는 그래프 우회). Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중 (8회 iteration, 현재 Tool orchestration 100% / Hallucination 8.9% / Judge overall 3.4–3.9).**
+현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + 와인 컬러 풀스크린 채팅 UI 동작 중. Pre-agent query validation gate 추가 (off-topic 쿼리는 그래프 우회). 멀티모달 vision 노드 추가 — 와인 라벨/레스토랑 와인리스트 사진을 스캔해 검색·추천으로 연결. Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중 (8회 iteration, 현재 Tool orchestration 100% / Hallucination 8.9% / Judge overall 3.4–3.9).**
 
 ### Query Validation Gate (신규)
 
@@ -25,6 +25,27 @@ BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으�
 
 구현: [`agent.py`](agent.py)의 `ask_user_clarification_tool` + `_count_clarifications_this_turn`, [`prompts.py`](prompts.py) Guideline G6, [`app.py`](app.py)의 interrupt 감지 + `Command(resume=...)` 분기, [`static/app.js`](static/app.js)의 `renderClarification()`, [`static/styles.css`](static/styles.css)의 `.clarification*` 클래스.
 
+### Vision — 멀티모달 라벨/와인리스트 스캔 (신규)
+
+사용자가 **와인 라벨 사진**이나 **레스토랑 와인 리스트 사진**을 첨부하면, 오케스트레이터 앞단의 전용 `vision_node`가 먼저 돌아 사진 속 텍스트를 구조화 추출한 뒤 기존 검색/추천 흐름으로 넘긴다. 모델은 그대로 Gemini 3.5 Flash (이미 멀티모달이라 모델 교체 없음).
+
+흐름: 프론트가 사진을 긴 변 ≤2048px JPEG로 다운스케일·재인코딩해 base64로 전송 → `app.py`가 텍스트+이미지 멀티모달 `HumanMessage` 구성 (이미지 첨부 시 validation 게이트 우회) → `entry_router`가 이미지 유무로 분기 → `vision_node`가 `with_structured_output(VisionExtraction)`으로 **보이는 텍스트만** 추출 (환각 방지: 안 보이면 null, 정규화/번역 금지) → 추출 결과를 **같은 id로 `HumanMessage` 교체**해 이미지를 버리고 텍스트로 fold (현재·미래 턴 토큰 절약) → orchestrator는 text-only로 동작.
+
+- **라벨**: producer/cuvée/품종/vintage/region 등 1종 추출 → 기존 store·critic 툴로 가격·재고·평점 조회.
+- **와인 리스트**: 줄별 verbatim `raw_text` + 파싱 필드로 N종 추출 → 리스트의 와인을 전부 조회·비교 (가성비/평점/페어링), tool budget 한도 내.
+- **무손실**: named field에 안 맞는 텍스트는 catch-all(`other_text`/`raw_text`)에 보존. 비와인 사진은 `document_type="other"`로 정중히 거절.
+- **UI**: 📷 첨부 버튼 + 드래그드롭 + 클립보드 붙여넣기, 썸네일 미리보기(최대 3장), `vision_start`/`vision_result` SSE로 "Image analysis" 배지 표시.
+
+구현: [`vision.py`](vision.py) (스키마 + `extract_vision` + `format_extraction`), [`prompts.py`](prompts.py)의 `VISION_EXTRACTION_PROMPT` + 오케스트레이터 Guideline G7, [`agent.py`](agent.py)의 `vision_node` + `entry_router`, [`app.py`](app.py)의 멀티모달 입력 + vision SSE, [`static/`](static/)의 이미지 첨부 UI. 설계 문서는 [`docs/VISION_NODE_DESIGN.md`](docs/VISION_NODE_DESIGN.md).
+
+### Tool 견고성 — 에러 격리 + 쿼리 폴백 (신규)
+
+**툴 에러 격리.** 예전엔 한 툴이 런타임 에러(네트워크/인증/파싱)를 던지면 그래프 밖으로 전파돼 **턴 전체가 멈췄다** (LangGraph 기본 핸들러는 인자 검증 오류만 잡고 나머지는 re-raise). 이제 `ToolNode(TOOLS, handle_tool_errors=tool_error_to_json)`로 **모든 예외를 `status:"error"` JSON 결과로 격리** — 실패한 툴은 에러로 표시되고 나머지 툴 결과로 답변을 이어간다 (orchestrator Guideline G8). clarification의 `interrupt`(GraphInterrupt)는 핸들러보다 먼저 re-raise되어 영향 없음. 프론트 드롭다운에도 "⚠️ Tool error"로 노출.
+
+**쿼리 폴백.** 일부 store 백엔드(Okanagan Cellars, Everything Wine, Legacy)는 쿼리의 **모든 토큰을 상품명에 AND 매칭**한다. 그래서 라벨/vision에서 뽑은 풀 문자열("Mission Hill Perpetua 2022 Chardonnay")은 상품명(`MISSION HILL - PERPETUA 2022`)에 "Chardonnay"가 없어 **0건**이 났다. 공통 헬퍼 [`query_fallback.py`](query_fallback.py)가 0건이면 **품종/연도를 떼고 → 뒤 토큰을 점진적으로(최소 3토큰) 줄여** 재시도해 첫 비어있지 않은 결과를 반환한다. (bcliquor는 검색이 관대해 불필요, marquis는 반대로 over-match라 별개 과제.)
+
+구현: [`safety.py`](safety.py)의 `tool_error_to_json` + [`agent.py`](agent.py) ToolNode 연결 + [`prompts.py`](prompts.py) G8, [`query_fallback.py`](query_fallback.py)의 `search_with_fallback` (okanagan/everythingwine/legacy 공유).
+
 ### 최근 UI/UX 개편
 
 - **랜딩 + 풀스크린 채팅 오버레이** — 간단한 capability 설명이 있는 랜딩 페이지에서 "Start chatting" 버튼을 누르면 화면을 가득 채우는 채팅 오버레이가 뜬다.
@@ -42,20 +63,22 @@ BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으�
 ## 전체 구조
 
 ```
-사용자 질문
+사용자 질문 (+ 와인 라벨/리스트 사진 첨부 가능)
     ↓
-HTML/CSS/JS 프론트엔드 (static/ — SUMAI 디자인 채팅 모달)
+HTML/CSS/JS 프론트엔드 (static/ — SUMAI 디자인 채팅 모달, 이미지 첨부)
     ↓
 FastAPI 백엔드 (app.py — SSE 스트리밍)
     ↓
-Validation Gate (validation.py — Gemini Flash 분류)
+Validation Gate (validation.py — Gemini Flash 분류)   ※ 이미지 첨부 시 우회
     │
     ├─ INVALID → 사용자 언어로 거절 → 그래프 우회 → 종료
     │
     └─ VALID ↓
 LangGraph Agent (agent.py — Gemini 3.5 Flash, 12개 tool)
     │
-    │   orchestrator → tools → orchestrator (loop)
+    │   entry_router ─(이미지)─→ vision_node ─┐
+    │                └─(텍스트)──────────────┴→ orchestrator
+    │   orchestrator → tools → orchestrator (loop)   ※ 툴 에러는 격리되어 계속 진행
     │                     ↓ (ask_user_clarification_tool)
     │                  interrupt() → SSE clarification_request → 유저 응답
     │                     ↓ Command(resume=...) → 다음 orchestrator round
@@ -88,7 +111,7 @@ LangGraph Agent (agent.py — Gemini 3.5 Flash, 12개 tool)
 | **Robert Parker** | `robert_parker_tool.py` | Algolia REST API + auto-login | ✅ 필요 (구독) |
 | **BC Liquor Store** | `bcliquor_tool.py` | JSON API (`/ajax/browse`) | ❌ |
 | **Okanagan Cellars** | `okanagan_cellars_tool.py` | JSON API (`/api/shop/.../products`) | ❌ |
-| **Everything Wine** | `everythingwine_tool.py` | HTML scraping (`catalogsearch`) | ❌ |
+| **Everything Wine** | `everythingwine_tool.py` | HTML scraping (`catalogsearch`) + In-Store Pickup REST API (매장별 재고) | ❌ |
 | **Marquis Wine Cellars** | `marquis_tool.py` | JSON API (BigCommerce Discovery) | ❌ |
 | **Legacy Liquor Store** | `legacy_tool.py` | GraphQL API (Apollo Server) | ❌ |
 | **Tavily 웹 검색** | `tavily_tool.py` | REST API (paid) | ✅ 필요 |
@@ -129,6 +152,7 @@ results = await search_bcliquor("tantalus", max_pages=2, category="wine")
 - **API**: `GET /api/shop/131-41/products?q=...&show_on_web=true`
 - **데이터**: 이름, 카테고리, 가격, 세일 여부, 재고 수량, 용량 (750ml, 1.5L 등)
 - **특징**: `_dc` 타임스탬프 파라미터로 캐시 우회, OOS 상품도 포함 가능
+- **쿼리 폴백**: 백엔드가 모든 토큰을 AND 매칭 → 라벨 풀 쿼리("...2022 Chardonnay")가 0건 나면 [`query_fallback.py`](query_fallback.py)가 품종/연도를 떼고 재시도
 
 ```python
 results = await search_okanagan_cellars("checkmate")
@@ -153,6 +177,7 @@ results, total = await search_marquis("martins lane", limit=20)
 - **API**: `POST https://production-retail-store-api-hagnfhf3sq-uc.a.run.app/graphql` (storeId: `"LL"`)
 - **데이터**: 이름, 브랜드, 가격 (정가/세일가), 세일 여부, 스태프 픽, 신상품, 국가, 지역, 태그, 재고 수량
 - **특징**: 가격 범위 필터 (`price_min`/`price_max`), 스태프 픽 필터, 세일 필터. URL 패턴은 `/product/{category}/{slug}` (카테고리는 첫 번째 태그 slug 사용)
+- **쿼리 폴백**: AND 매칭이라 라벨 풀 쿼리가 0건이면 [`query_fallback.py`](query_fallback.py)로 재시도. 단 Legacy는 아포스트로피를 보존해야 해서("Martin's Lane") 자체 cleaner를 폴백에 주입
 - **URL 예시**: `https://www.legacyliquorstore.com/product/wine/orofino-gamay-1-x-750ml`
 
 ```python
@@ -161,15 +186,17 @@ results, total = await search_legacy("pinot noir", limit=30, price_min=20, price
 
 ### 6. Everything Wine (`everythingwine_tool.py`)
 
-밴쿠버 와인샵. API가 없어서 HTML scraping으로 만들었다. Magento 계열 프론트엔드라 서버사이드 렌더링.
+밴쿠버 와인샵 (Magento 2 + Elasticsuite). 검색 결과는 HTML scraping, **매장별 픽업 재고는 공개 REST API**로 보강한다.
 
 - **방식**: `GET /catalogsearch/result/?q=...` → BeautifulSoup으로 파싱
-- **데이터**: 이름, 가격, 세일 여부, 국가, 재고 상태 (창고배송/매장픽업/타매장)
-- **특징**: 재고 상태가 3단계로 나뉨 — ✅ available, ❌ unavailable, ⚠️ other-store
+- **데이터**: 이름, SKU, 가격, 세일 여부, 국가, 창고/매장 재고 상태 (✅ available / ❌ unavailable / ⚠️ other-store)
+- **매장별 재고 (신규)**: GraphQL/일반 REST는 막혀 있지만(`/graphql` 404, `/rest/V1` 401), Magento **In-Store Pickup REST API** (`GET /rest/V1/inventory/in-store-pickup/pickup-locations`)는 무인증 공개라 SKU로 **매장별 정확 수량**을 준다. SKU는 검색결과 이미지 파일명(`<SKU>_<slug>.jpg`)에서 추가 요청 없이 추출. Lower Mainland 4개 매장(Vancouver / North Vancouver / South Surrey / Langley)만 필터링해 각 결과의 `store_stock`에 채운다 (병렬, 상한 `max_store_lookups`).
+- **쿼리 폴백**: Elasticsuite AND 매칭 → 라벨 풀 쿼리가 0건이면 [`query_fallback.py`](query_fallback.py)로 재시도
 - **디버그**: `debug_everythingwine.py`로 HTML 구조 확인용 스크립트도 있음
 
 ```python
-results = await search_everything_wine("synchromesh")
+results = await search_everything_wine("synchromesh")               # 매장별 재고 포함
+results = await search_everything_wine("synchromesh", with_store_stock=False)  # 검색만
 ```
 
 ### 7. Gismondi on Wine (`gismondi_tool.py` + `data/wines.db`)
@@ -200,7 +227,7 @@ results = await search_gismondi(
 세계에서 가장 영향력 있는 와인 평가 시스템. Robert Parker Wine Advocate의 100점 만점 평점, 전문 테이스팅 노트, 음용 기간(drink window) 등을 Algolia 기반 REST API로 검색한다. 월간 구독($9.99 USD/month)이 필요하다.
 
 - **인증**: CSRF 토큰 + 이메일/비밀번호 자동 로그인. `GET /users/csrf-token`으로 CSRF 쿠키를 받고, `POST /users/login`에 `xsrf-token` 헤더로 전달. JWT `accessToken` (~30일 유효)을 발급받아 이후 API 호출에 사용. 401 에러 시 자동 재로그인.
-- **검색**: Algolia `filters` 문법으로 rating, country, region, color, variety 필터링 가능. `facetFilters` 배열은 이 API에서 무시됨 — 반드시 `filters` 문자열 사용.
+- **검색**: Algolia `filters` 문법으로 rating, country, region, color, variety 필터링 가능. `facetFilters` 배열은 이 API에서 무시됨 — 반드시 `filters` 문자열 사용. `hits_per_page`는 호출당 **최대 20**으로 하드캡 (응답이 커서 타임아웃/페이로드 에러 방지).
 - **데이터**: 와인 이름, producer, vintage, RP 점수 (100점), varieties, region/sub_region/appellation, 가격 범위, drink window, certified (Organic 등), 리뷰어별 테이스팅 노트 + 기사 제목 + producer note
 - **용도**: 국제적으로 인정받는 점수 체계가 필요할 때. WineAlign/Gismondi가 캐나다 중심이라면, RP는 전 세계 와인과의 비교가 가능.
 
@@ -235,13 +262,15 @@ results, answer = await search_tavily("best food pairings for BC Pinot Noir")
 
 ```
 BC-wine-ai-agents/
-├── agent.py                    # LangGraph 그래프 빌더 (ReAct + 12 tools, compaction 없음)
-├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, 세션 관리, validation 게이트)
+├── agent.py                    # LangGraph 그래프 빌더 (entry_router + vision + ReAct 12 tools)
+├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, 멀티모달 입력, validation 게이트)
 ├── validation.py               # Pre-agent query 검증 (off-topic 쿼리 그래프 우회)
-├── state.py                    # AgentState TypedDict (messages + tool_call_log)
+├── vision.py                   # 멀티모달 라벨/와인리스트 추출 (VisionExtraction 스키마)
+├── state.py                    # AgentState TypedDict (messages + tool_call_log + vision_extractions)
 ├── models.py                   # Gemini 3.5 Flash LLM 팩토리
-├── prompts.py                  # 오케스트레이터/페어링/relevance-filter/검증 시스템 프롬프트
-├── safety.py                   # safe_tool 데코레이터 (에러 래핑)
+├── prompts.py                  # 오케스트레이터/페어링/relevance-filter/검증/vision 시스템 프롬프트
+├── safety.py                   # tool_error_to_json (툴 예외 → status:error JSON, ToolNode 격리)
+├── query_fallback.py           # 공통 쿼리 폴백 (okanagan/everythingwine/legacy 공유)
 ├── merge.py                    # 와인 이름 정규화 + 매장 간 중복 제거
 ├── winealign_tool.py           # WineAlign 검색
 ├── bcliquor_tool.py            # BC Liquor Store 검색
@@ -257,7 +286,7 @@ BC-wine-ai-agents/
 ├── static/
 │   ├── index.html              # 랜딩 페이지 + 풀스크린 채팅 오버레이
 │   ├── styles.css              # 와인 컬러 팔레트, 채팅 + 툴 배지 스타일
-│   └── app.js                  # SSE 클라이언트, run_id 기반 툴 배지 매칭, 마크다운 렌더링
+│   └── app.js                  # SSE 클라이언트, 이미지 첨부/다운스케일, 툴 배지, 마크다운 렌더링
 ├── data/
 │   ├── wines.db                # Gismondi 리뷰 SQLite (~13,539 rows, FTS5)
 │   └── checkpoints.db          # LangGraph 체크포인터 (gitignored)
@@ -269,7 +298,8 @@ BC-wine-ai-agents/
 │   ├── quality_eval.py         # Runner — produces results.json + summary.md + transcripts
 │   └── results/<timestamp>/    # Per-run outputs (gitignored)
 ├── docs/
-│   └── AGENT_DESIGN.md         # 전체 아키텍처 설계 문서 + iteration history
+│   ├── AGENT_DESIGN.md         # 전체 아키텍처 설계 문서 + iteration history
+│   └── VISION_NODE_DESIGN.md   # vision 노드 설계 (as-built)
 ├── .github/workflows/
 │   └── update_db.yml           # DB 자동 업데이트 (Tue/Thu/Sat)
 ├── .env                        # API 키 (gitignored)
@@ -363,7 +393,7 @@ python gismondi_tool.py         # pinot/riesling/chardonnay 등 6종 쿼리
 - **python-dotenv** — 환경변수 로딩
 - **SQLite + FTS5** — Gismondi 리뷰 로컬 DB (Python 표준 라이브러리, 별도 설치 없음)
 - **LangGraph** — ReAct 에이전트 오케스트레이션 (12개 tool, 병렬 실행)
-- **Gemini 3.5 Flash (Vertex AI)** — 모든 노드에서 사용하는 LLM
+- **Gemini 3.5 Flash (Vertex AI)** — 모든 노드에서 사용하는 LLM (멀티모달 — vision 노드에서 라벨/와인리스트 이미지 분석)
 - **FastAPI** — SSE 스트리밍 백엔드
 - **HTML/CSS/JS** — SUM AI 디자인 계승 채팅 UI (vanilla, 빌드 스텝 없음)
 - **rapidfuzz** — 와인 이름 퍼지 매칭 (매장 간 중복 제거)
@@ -399,7 +429,8 @@ python -m uvicorn app:app --port 8000
 - [x] `state.py` — `AgentState` TypedDict
 - [x] `models.py` — Gemini 3.5 Flash 팩토리 (Vertex AI)
 - [x] `prompts.py` — orchestrator + pairing + relevance-filter + validation 프롬프트. behavioral rules는 Hard Constraints(C1–C3) / Guidelines(G1–G6)로 분리.
-- [x] `safety.py` — `safe_tool` 데코레이터 (graceful degradation)
+- [x] `safety.py` — `tool_error_to_json` (툴 예외를 status:error JSON으로 격리, ToolNode `handle_tool_errors` 연결)
+- [x] `vision.py` + `query_fallback.py` — 멀티모달 라벨/리스트 스캔, 공통 쿼리 폴백
 - [x] `merge.py` — 와인 이름 정규화 + 매장 간 중복 제거 (rapidfuzz). Gismondi 의 `price_channel` → synthetic StorePrice 변환 포함.
 - [x] `agent.py` — LangGraph 그래프 빌드, ReAct + InMemorySaver. `MAX_TOOL_ROUNDS=6` safety net. Compaction 제거 — raw tool output을 그대로 LLM에 전달 (answer quality 우선). 오케스트레이터 출력이 곧 최종 답변.
 - [x] `app.py` — FastAPI + SSE 스트리밍 + 세션 관리

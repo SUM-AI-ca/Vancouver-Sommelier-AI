@@ -19,9 +19,17 @@ from models import get_llm
 from okanagan_cellars_tool import search_okanagan_cellars
 from prompts import ORCHESTRATOR_SYSTEM_PROMPT, PAIRING_SYSTEM_PROMPT
 from robert_parker_tool import search_robert_parker
-from safety import safe_tool
+from safety import tool_error_to_json
 from state import AgentState
 from tavily_tool import search_tavily
+from vision import (
+    extract_image_urls,
+    extract_text,
+    extract_vision,
+    format_extraction,
+    latest_human_message,
+    message_has_image,
+)
 from winealign_tool import search_winealign
 
 
@@ -48,9 +56,10 @@ async def search_winealign_tool(query: str, max_pages: int = 3, include_reviews:
 
 @tool
 async def search_everything_wine_tool(query: str) -> str:
-    """Search Everything Wine (Vancouver) for delivery and pickup availability.
-    Returns 3-level stock status: warehouse delivery, in-store pickup, check other stores.
-    Use when the user wants Vancouver-area pickup or home delivery.
+    """Search Everything Wine for delivery and per-store pickup availability.
+    Returns warehouse-delivery status plus exact per-store stock quantities for the
+    Lower Mainland stores (Vancouver, North Vancouver, South Surrey, Langley).
+    Use when the user wants home delivery, in-store pickup, or which specific store has a wine.
     """
     results = await search_everything_wine(query)
     return json.dumps({"status": "ok", "tool": "search_everything_wine", "results": [r.model_dump() for r in results]})
@@ -245,8 +254,6 @@ TOOLS = [
 
 MAX_CLARIFICATIONS_PER_TURN = 3
 
-SAFE_TOOLS = [safe_tool(t) for t in TOOLS]
-
 
 # ── Graph nodes ──────────────────────────────────────────────────
 
@@ -351,7 +358,12 @@ def should_continue(state: AgentState) -> str:
 
 
 async def tool_node_with_logging(state: AgentState) -> dict:
-    tool_node = ToolNode(TOOLS)
+    # handle_tool_errors routes every tool exception through tool_error_to_json so a
+    # single failing tool returns a status="error" result instead of crashing the
+    # turn — the orchestrator keeps the other tools' results and answers from them.
+    # (GraphInterrupt from ask_user_clarification_tool is re-raised by ToolNode
+    # before this handler, so clarifications still work.)
+    tool_node = ToolNode(TOOLS, handle_tool_errors=tool_error_to_json)
     result = await tool_node.ainvoke(state)
 
     log_entries = state.get("tool_call_log", [])
@@ -392,15 +404,58 @@ def _extract_text(content) -> str:
     return str(content)
 
 
+# ── Vision node ──────────────────────────────────────────────────
+
+async def vision_node(state: AgentState) -> dict:
+    """Multimodal pass that runs before the orchestrator when the user's latest
+    message carries an image. It transcribes the wine label / wine list into a
+    structured record, then folds that read into the user turn as text.
+
+    The replacement HumanMessage reuses the original message id, so add_messages
+    swaps it in place — stripping the (token-heavy) image from context for this
+    turn and every future turn. From here the orchestrator runs text-only."""
+    human = latest_human_message(state["messages"])
+    if human is None or not message_has_image(human):
+        return {}  # defensive: entry_router shouldn't route here without an image
+
+    image_urls = extract_image_urls(human)
+    user_text = extract_text(human)
+
+    extraction = await extract_vision(image_urls, user_text)
+    summary = format_extraction(extraction)
+
+    base_text = user_text or "(The user attached an image with no text.)"
+    replacement = HumanMessage(
+        id=human.id,
+        content=f"{base_text}\n\n[Image analysis — vision]\n{summary}",
+    )
+    return {
+        "messages": [replacement],
+        "vision_extractions": [extraction.model_dump()],
+    }
+
+
+def entry_router(state: AgentState) -> str:
+    """Route the turn to vision_node first when an image is attached, else
+    straight to the orchestrator."""
+    human = latest_human_message(state["messages"])
+    return "vision" if message_has_image(human) else "orchestrator"
+
+
 # ── Graph builder ────────────────────────────────────────────────
 
 def build_graph(checkpointer=None):
     builder = StateGraph(AgentState)
 
+    builder.add_node("vision", vision_node)
     builder.add_node("orchestrator", orchestrator_node)
     builder.add_node("tools", tool_node_with_logging)
 
-    builder.set_entry_point("orchestrator")
+    builder.set_conditional_entry_point(entry_router, {
+        "vision": "vision",
+        "orchestrator": "orchestrator",
+    })
+    builder.add_edge("vision", "orchestrator")
     builder.add_conditional_edges("orchestrator", should_continue, {
         "tools": "tools",
         "end": END,

@@ -13,6 +13,7 @@ const TOOL_LABELS = {
   reasoning_pair_wine_tool: "Wine Pairing",
   update_preferences_tool: "Preferences",
   ask_user_clarification_tool: "Clarification",
+  vision: "Image analysis",
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -23,6 +24,16 @@ const statusEl = $("#chat-status");
 const overlay = $("#chat-overlay");
 const openBtn = $("#open-chat");
 const closeBtn = $("#chat-close");
+const attachBtn = $("#chat-attach");
+const fileInput = $("#chat-file");
+const attachmentsEl = $("#chat-attachments");
+
+// Image attachment limits (mirror the server's MAX_IMAGES). Photos are
+// downscaled + re-encoded to JPEG client-side before upload, so a 12MP phone
+// shot doesn't balloon the request or the model's token bill.
+const MAX_IMAGES = 3;
+const MAX_DIM = 2048; // longest edge, px — high enough for small wine-list text
+let attachedImages = []; // data-URL strings, pending send
 
 // thread_id is intentionally NOT persisted in localStorage. Each time the
 // chatbox is opened we create a fresh session so the agent's wine_context
@@ -56,6 +67,7 @@ function closeChat() {
 function resetConversation() {
   threadId = null;
   activeTools = 0;
+  clearAttachments();
   messagesEl.innerHTML = `<div class="chat-message ai">${escapeHtml(INITIAL_GREETING)}</div>`;
   setStatus("Ready", false);
 }
@@ -229,18 +241,106 @@ function renderClarification(question, options) {
   scrollToBottom();
 }
 
+/* ── Image attachments ───────────────────────────── */
+
+// Decode a file, downscale its longest edge to MAX_DIM, and re-encode as JPEG.
+// Resolves to a data-URL, or null if the browser can't decode the file (e.g.
+// HEIC on desktop Chrome/Firefox — iOS Safari decodes it natively and succeeds).
+function downscaleToDataUrl(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const longest = Math.max(img.width, img.height) || 1;
+      const scale = longest > MAX_DIM ? MAX_DIM / longest : 1;
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      try {
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    img.src = url;
+  });
+}
+
+async function processFiles(fileList) {
+  const files = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
+  for (const file of files) {
+    if (attachedImages.length >= MAX_IMAGES) {
+      alert(`이미지는 한 번에 최대 ${MAX_IMAGES}장까지 첨부할 수 있어요.`);
+      break;
+    }
+    const dataUrl = await downscaleToDataUrl(file);
+    if (dataUrl) {
+      attachedImages.push(dataUrl);
+      renderAttachments();
+    } else {
+      alert("이 이미지를 불러올 수 없어요. JPEG 또는 PNG로 다시 시도해주세요.");
+    }
+  }
+}
+
+function renderAttachments() {
+  if (!attachedImages.length) {
+    attachmentsEl.hidden = true;
+    attachmentsEl.innerHTML = "";
+    return;
+  }
+  attachmentsEl.hidden = false;
+  attachmentsEl.innerHTML = attachedImages
+    .map(
+      (u, i) => `<div class="chat-attachment">
+        <img src="${u}" alt="attachment ${i + 1}">
+        <button type="button" class="chat-attachment-remove" data-index="${i}" aria-label="Remove image">&times;</button>
+      </div>`
+    )
+    .join("");
+  attachmentsEl.querySelectorAll(".chat-attachment-remove").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      attachedImages.splice(Number(btn.dataset.index), 1);
+      renderAttachments();
+    });
+  });
+}
+
+function clearAttachments() {
+  attachedImages = [];
+  if (attachmentsEl) {
+    attachmentsEl.hidden = true;
+    attachmentsEl.innerHTML = "";
+  }
+}
+
 /* ── Send message via SSE ────────────────────────── */
 
 async function sendMessage() {
   const text = inputEl.value.trim();
-  if (!text || sending) return;
+  const images = attachedImages.slice();
+  if ((!text && images.length === 0) || sending) return;
 
   sending = true;
   sendBtn.disabled = true;
   inputEl.value = "";
   inputEl.style.height = "auto";
+  clearAttachments();
 
-  addMessage("user", escapeHtml(text));
+  const thumbsHtml = images.length
+    ? `<div class="chat-msg-thumbs">${images
+        .map((u) => `<img class="chat-msg-thumb" src="${u}" alt="attached image">`)
+        .join("")}</div>`
+    : "";
+  addMessage("user", (text ? escapeHtml(text) : "") + thumbsHtml);
 
   await ensureSession();
 
@@ -254,7 +354,11 @@ async function sendMessage() {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ thread_id: threadId, message: text }),
+      body: JSON.stringify({
+        thread_id: threadId,
+        message: text,
+        images: images.length ? images : undefined,
+      }),
     });
 
     const reader = res.body.getReader();
@@ -279,6 +383,18 @@ async function sendMessage() {
         }
 
         switch (event.type) {
+          case "vision_start":
+            // vision_node runs before any tool. Reuse the tool-badge UI so the
+            // "Image analysis" step shows the same expandable result panel.
+            addToolBadge("vision", null);
+            setStatus("Analyzing image", true);
+            break;
+
+          case "vision_result":
+            completeToolBadge("vision", null, event.summary, event.count);
+            setStatus("Processing", true);
+            break;
+
           case "tool_start": {
             // ask_user_clarification_tool pauses on an interrupt — its tool_end
             // doesn't fire until the user replies. Skip the badge so the
@@ -416,6 +532,9 @@ h1{font-size:1.3rem;font-weight:700;color:#7A3D4F;margin-bottom:0.25rem}
 .pdf-msg th{background:#F4E7E9;font-weight:600}
 .pdf-msg a{color:#7A3D4F}
 .pdf-msg h1,.pdf-msg h2,.pdf-msg h3{font-size:1rem;font-weight:700;margin:0.75rem 0 0.25rem}
+.chat-msg-thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chat-msg-thumb{width:auto;height:auto;max-width:220px;max-height:220px;object-fit:contain;border-radius:6px;border:1px solid #ECDFE0}
+.pdf-msg img{max-width:100%;height:auto}
 </style></head><body>
 <h1>BC Wine AI Agent</h1>
 <div class="pdf-date">${new Date().toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
@@ -450,6 +569,52 @@ inputEl.addEventListener("keydown", (e) => {
 inputEl.addEventListener("input", () => {
   inputEl.style.height = "auto";
   inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + "px";
+});
+
+/* ── Image attachment listeners ──────────────────── */
+
+if (attachBtn && fileInput) {
+  attachBtn.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", (e) => {
+    processFiles(e.target.files);
+    fileInput.value = ""; // allow re-selecting the same file
+  });
+}
+
+// Paste an image straight from the clipboard.
+inputEl.addEventListener("paste", (e) => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  const files = [];
+  for (const it of items) {
+    if (it.kind === "file" && it.type.startsWith("image/")) {
+      const f = it.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  if (files.length) {
+    e.preventDefault();
+    processFiles(files);
+  }
+});
+
+// Drag-and-drop anywhere on the chat overlay.
+["dragover", "dragenter"].forEach((ev) =>
+  overlay.addEventListener(ev, (e) => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
+      e.preventDefault();
+      overlay.classList.add("drag-over");
+    }
+  })
+);
+["dragleave", "dragend", "drop"].forEach((ev) =>
+  overlay.addEventListener(ev, () => overlay.classList.remove("drag-over"))
+);
+overlay.addEventListener("drop", (e) => {
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+    e.preventDefault();
+    processFiles(e.dataTransfer.files);
+  }
 });
 
 // Clean up the stale thread_id from earlier builds that persisted it across

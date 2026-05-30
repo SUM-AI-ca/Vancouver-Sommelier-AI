@@ -274,7 +274,7 @@ async def search_robert_parker(
         query:         Wine name, producer, region, or grape
                        (e.g. "pinot noir okanagan", "martin's lane")
         rating_min:    Minimum RP rating (50–100, default 50)
-        hits_per_page: Results per page (default 10, max 50)
+        hits_per_page: Results per page (default 10, max 20)
         page:          Zero-based page number for pagination
         sort:          "relevancy" (default) or "rating" or "vintage" or "price"
         country:       Filter — e.g. "Canada"
@@ -291,7 +291,9 @@ async def search_robert_parker(
         "page": page,
         "facets": ["*"],
         "facetFilters": [],
-        "hitsPerPage": min(hits_per_page, 50),
+        # Hard cap at 20: larger pulls return many full tasting-note bodies in one
+        # response, which was tripping errors (oversized payload / timeout).
+        "hitsPerPage": min(hits_per_page, 20),
         "sortFacetValuesBy": "count",
     }
 
