@@ -4,6 +4,36 @@ const API_BASE = window.location.hostname === "localhost" || window.location.hos
   ? ""
   : "https://bc-wine-agent-135257828500.us-west1.run.app";
 
+const TURNSTILE_SITE_KEY = "0x4AAAAAACk40fbVxvRdolMx";
+let turnstileToken = null;
+let turnstileWidgetId = null;
+
+function initTurnstile() {
+  if (typeof turnstile === "undefined" || document.getElementById("cf-turnstile")) return;
+  const container = document.createElement("div");
+  container.id = "cf-turnstile";
+  container.style.cssText = "display:flex;justify-content:center;padding:0.5rem 0";
+  const inputArea = document.querySelector(".chat-input-area");
+  inputArea.parentNode.insertBefore(container, inputArea);
+  turnstileWidgetId = turnstile.render("#cf-turnstile", {
+    sitekey: TURNSTILE_SITE_KEY,
+    callback: (token) => { turnstileToken = token; },
+    "refresh-expired": "auto",
+    size: "normal",
+  });
+}
+
+async function getTurnstileToken() {
+  if (typeof turnstile === "undefined") return null;
+  if (turnstileToken) {
+    const token = turnstileToken;
+    turnstileToken = null;
+    turnstile.reset(turnstileWidgetId);
+    return token;
+  }
+  return null;
+}
+
 const TOOL_LABELS = {
   search_bcliquor_tool: "BC Liquor Store",
   search_winealign_tool: "WineAlign",
@@ -55,9 +85,8 @@ async function openChat() {
   resetConversation();
   overlay.classList.add("active");
   document.body.style.overflow = "hidden";
+  initTurnstile();
   await ensureSession();
-  // Defer focus so the overlay is painted before the input grabs focus,
-  // otherwise mobile keyboards can pop up against an offscreen element.
   setTimeout(() => inputEl.focus(), 0);
 }
 
@@ -353,6 +382,7 @@ async function sendMessage() {
   let currentRunId = null;
 
   try {
+    const cfToken = await getTurnstileToken();
     const res = await fetch(`${API_BASE}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -360,6 +390,7 @@ async function sendMessage() {
         thread_id: threadId,
         message: text,
         images: images.length ? images : undefined,
+        cf_turnstile_token: cfToken,
       }),
     });
 

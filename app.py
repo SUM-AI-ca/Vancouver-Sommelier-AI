@@ -5,14 +5,18 @@ import logging
 import os
 import uuid
 
+import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from agent import get_graph
 from validation import validate_query
@@ -43,7 +47,10 @@ def _log_langsmith_status() -> None:
 
 _log_langsmith_status()
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="BC Wine AI Agent")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -76,10 +83,30 @@ class ChatRequest(BaseModel):
     # Base64 data-URLs (data:image/...;base64,...). The frontend downscales and
     # re-encodes to JPEG before sending. None/empty ⇒ a normal text turn.
     images: list[str] | None = None
+    cf_turnstile_token: str | None = None
 
 
 class SessionResponse(BaseModel):
     thread_id: str
+
+
+TURNSTILE_SECRET = os.getenv("CF_TURNSTILE_SECRET", "")
+
+
+async def _verify_turnstile(token: str | None, request: Request) -> bool:
+    """Verify a Cloudflare Turnstile token. Returns True if valid or if
+    Turnstile is not configured (secret not set)."""
+    if not TURNSTILE_SECRET:
+        return True
+    if not token:
+        return False
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            data={"secret": TURNSTILE_SECRET, "response": token,
+                  "remoteip": request.client.host if request.client else ""},
+        )
+        return resp.json().get("success", False)
 
 
 def sse(payload: dict) -> str:
@@ -256,7 +283,11 @@ def _extract_token_texts(chunk) -> list[str]:
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+@limiter.limit("20/hour")
+async def chat(req: ChatRequest, request: Request):
+    if not await _verify_turnstile(req.cf_turnstile_token, request):
+        return JSONResponse(status_code=403, content={"error": "Bot verification failed"})
+
     async def event_stream():
         graph = _get_graph()
         config = {
