@@ -10,12 +10,9 @@ let turnstileWidgetId = null;
 
 function initTurnstile() {
   if (typeof turnstile === "undefined" || document.getElementById("cf-turnstile")) return;
-  const container = document.createElement("div");
-  container.id = "cf-turnstile";
-  container.style.cssText = "display:inline-flex;align-items:center;margin-left:0.5rem";
-  const status = document.getElementById("chat-status");
-  status.parentNode.insertBefore(container, status.nextSibling);
-  turnstileWidgetId = turnstile.render("#cf-turnstile", {
+  const container = document.getElementById("turnstile-container");
+  if (!container) return;
+  turnstileWidgetId = turnstile.render(container, {
     sitekey: TURNSTILE_SITE_KEY,
     callback: (token) => { turnstileToken = token; },
     "refresh-expired": "auto",
@@ -85,10 +82,11 @@ async function openChat() {
   resetConversation();
   overlay.classList.add("active");
   document.body.style.overflow = "hidden";
-  initTurnstile();
   await ensureSession();
   setTimeout(() => inputEl.focus(), 0);
 }
+
+initTurnstile();
 
 function closeChat() {
   overlay.classList.remove("active");
