@@ -1,6 +1,8 @@
 /* BC Wine — SSE chat client */
 
-const API_BASE = "";
+const API_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  ? ""
+  : "https://bc-wine-agent-135257828500.us-west1.run.app";
 
 const TURNSTILE_SITE_KEY = "0x4AAAAAACk40fbVxvRdolMx";
 let turnstileToken = null;
@@ -111,7 +113,7 @@ document.addEventListener("keydown", (e) => {
 async function ensureSession() {
   if (threadId) return;
   try {
-    const res = await fetch(`${API_BASE}/api/session`, { method: "POST" });
+    const res = await fetch(`${API_BASE}/api/session`, { method: "POST", headers: { "X-Proxy-Secret": "Lk9s7vR7SzB3k3ag1mcMuxFtPe8NQ4fqcmPBiKCfEVM" } });
     const data = await res.json();
     threadId = data.thread_id;
   } catch {
@@ -381,7 +383,7 @@ async function sendMessage() {
     const cfToken = await getTurnstileToken();
     const res = await fetch(`${API_BASE}/api/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Proxy-Secret": "Lk9s7vR7SzB3k3ag1mcMuxFtPe8NQ4fqcmPBiKCfEVM" },
       body: JSON.stringify({
         thread_id: threadId,
         message: text,
