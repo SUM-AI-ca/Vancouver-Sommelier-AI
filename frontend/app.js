@@ -1,5 +1,9 @@
 /* BC Wine — SSE chat client */
 
+const API_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+  ? ""
+  : "https://bc-wine-agent-135257828500.us-west1.run.app";
+
 const TOOL_LABELS = {
   search_bcliquor_tool: "BC Liquor Store",
   search_winealign_tool: "WineAlign",
@@ -82,7 +86,7 @@ document.addEventListener("keydown", (e) => {
 async function ensureSession() {
   if (threadId) return;
   try {
-    const res = await fetch("/api/session", { method: "POST" });
+    const res = await fetch(`${API_BASE}/api/session`, { method: "POST" });
     const data = await res.json();
     threadId = data.thread_id;
   } catch {
@@ -349,7 +353,7 @@ async function sendMessage() {
   let currentRunId = null;
 
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch(`${API_BASE}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
