@@ -50,7 +50,7 @@ app.add_middleware(
     allow_origins=[
         "https://wineaiagent.com",
         "https://www.wineaiagent.com",
-        "https://bcwineaiagents.pages.dev",
+        "https://bcwineaiagents.juhyun5328-b18.workers.dev",
         "http://localhost:8000",
     ],
     allow_methods=["*"],
