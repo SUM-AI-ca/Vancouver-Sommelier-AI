@@ -24,7 +24,7 @@ jobs:
 
     - name: Update submodule to latest
       run: |
-        git submodule update --remote --merge
+        git submodule update --remote --force
 
     - name: Set up Python
       uses: actions/setup-python@v5
