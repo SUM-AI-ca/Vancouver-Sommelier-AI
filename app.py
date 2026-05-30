@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel
 
@@ -43,6 +44,10 @@ _log_langsmith_status()
 
 app = FastAPI(title="BC Wine AI Agent")
 
+# Cap attached images per turn (matches the frontend limit). Wine lists can span
+# 2 photos; 3 leaves headroom without inviting token blow-ups.
+MAX_IMAGES = 3
+
 _graph = None
 
 
@@ -56,6 +61,9 @@ def _get_graph():
 class ChatRequest(BaseModel):
     thread_id: str
     message: str
+    # Base64 data-URLs (data:image/...;base64,...). The frontend downscales and
+    # re-encodes to JPEG before sending. None/empty ⇒ a normal text turn.
+    images: list[str] | None = None
 
 
 class SessionResponse(BaseModel):
@@ -150,6 +158,64 @@ def _summarize_tool_output(output) -> list[dict]:
                 "url": None,
                 "markdown": True,
             })
+
+    # Surface tool failures so the dropdown shows the error instead of a silent
+    # "no results". The orchestrator still answers from the other tools (errors are
+    # contained by tool_error_to_json); this only makes the failure visible.
+    if not rows:
+        status = data.get("status")
+        if status and status != "ok":
+            rows.append({
+                "title": "⚠️ Tool error",
+                "subtitle": str(data.get("message") or f"status: {status}")[:300],
+                "url": None,
+            })
+    return rows
+
+
+def _summarize_vision(extractions) -> list[dict]:
+    """Compact rows describing what the vision_node read from the attached image(s),
+    for the frontend's expandable badge. Reuses the {title, subtitle, url} row shape
+    that renderToolRow already knows how to draw.
+
+    `extractions` is the list of VisionExtraction.model_dump() dicts the node wrote
+    to state under "vision_extractions".
+    """
+    rows: list[dict] = []
+    if not isinstance(extractions, list):
+        return rows
+    for ex in extractions:
+        if not isinstance(ex, dict):
+            continue
+        dtype = ex.get("document_type")
+        if dtype == "label" and isinstance(ex.get("label"), dict):
+            lab = ex["label"]
+            title = " ".join(
+                str(x) for x in (lab.get("producer"), lab.get("wine_name")) if x
+            ) or "Wine label"
+            bits = [lab.get("varietal"), lab.get("vintage"), lab.get("region"), lab.get("abv")]
+            rows.append({
+                "title": title[:160],
+                "subtitle": " · ".join(str(b) for b in bits if b)[:200],
+                "url": None,
+            })
+        elif dtype == "wine_list" and isinstance(ex.get("wine_list"), dict):
+            for it in ex["wine_list"].get("items", []):
+                if not isinstance(it, dict):
+                    continue
+                title = it.get("wine_name") or it.get("raw_text") or "Wine"
+                bits = [it.get("producer"), it.get("vintage"), it.get("region"), it.get("price")]
+                rows.append({
+                    "title": str(title)[:160],
+                    "subtitle": " · ".join(str(b) for b in bits if b)[:200],
+                    "url": None,
+                })
+        elif dtype == "other":
+            rows.append({
+                "title": "Not a wine image",
+                "subtitle": str(ex.get("notes") or "")[:200],
+                "url": None,
+            })
     return rows
 
 
@@ -207,11 +273,16 @@ async def chat(req: ChatRequest):
         except Exception:
             snapshot = None
 
-        if not is_resume:
+        if not is_resume and not req.images:
             # Pre-agent validation gate. Off-topic queries (weather, sports, code, etc.)
             # short-circuit here with an in-language rejection so we don't pay for an
             # orchestrator round + tools. Failures fall through to the agent — the
             # orchestrator's Guideline G5 (off-topic redirect) is the backstop.
+            #
+            # Skipped when an image is attached: validate_query only sees text, and an
+            # image with little/no text would trip it. Scope is enforced downstream
+            # instead — vision_node tags non-wine photos document_type="other" and the
+            # orchestrator (G7) declines them politely.
             try:
                 verdict = await validate_query(req.message)
             except Exception:
@@ -221,7 +292,18 @@ async def chat(req: ChatRequest):
                 yield sse({"type": "done"})
                 return
 
-        inputs = Command(resume=req.message) if is_resume else {"messages": [("user", req.message)]}
+        if is_resume:
+            inputs = Command(resume=req.message)
+        elif req.images:
+            # Multimodal turn: text + image parts in one HumanMessage. The id is set
+            # explicitly so vision_node can swap this message in place (same id) after
+            # it folds the extraction in and strips the image. See agent.vision_node.
+            parts = [{"type": "text", "text": req.message or "이 와인 이미지를 분석해줘"}]
+            for url in req.images[:MAX_IMAGES]:
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+            inputs = {"messages": [HumanMessage(content=parts, id=str(uuid.uuid4()))]}
+        else:
+            inputs = {"messages": [("user", req.message)]}
 
         # The orchestrator is the only LLM that streams (synthesis was removed).
         # It may run several rounds per turn; the tool-calling rounds are
@@ -233,10 +315,35 @@ async def chat(req: ChatRequest):
         answer_buffer: list[str] = []
         answer_run_id = None
 
+        # vision_node is a graph node (not a tool), so on_tool_* never fires for it.
+        # Surface its progress to the UI via metadata.langgraph_node (robust across
+        # langgraph naming): the first event inside the node opens the badge, and the
+        # node's on_chain_end carries the extraction. A post-loop state read is the
+        # fallback so the badge always resolves even if that exact event is missed.
+        vision_started = False
+        vision_result_sent = False
+
         try:
             async for event in graph.astream_events(inputs, config=config, version="v2"):
                 kind = event["event"]
                 name = event.get("name", "")
+                node = (event.get("metadata") or {}).get("langgraph_node", "")
+
+                if node == "vision" and not vision_started:
+                    vision_started = True
+                    yield sse({"type": "vision_start"})
+
+                if kind == "on_chain_end" and name == "vision" and not vision_result_sent:
+                    out = event.get("data", {}).get("output")
+                    extractions = out.get("vision_extractions") if isinstance(out, dict) else None
+                    if extractions is not None:
+                        vision_result_sent = True
+                        summary = _summarize_vision(extractions)
+                        yield sse({
+                            "type": "vision_result",
+                            "summary": summary,
+                            "count": len(summary),
+                        })
 
                 if kind == "on_tool_start":
                     data = event.get("data", {})
@@ -283,6 +390,15 @@ async def chat(req: ChatRequest):
                 post_snapshot = await graph.aget_state(config)
             except Exception:
                 post_snapshot = None
+
+            # Fallback: if the image was analyzed but the in-loop vision_result was
+            # missed, read the extraction off final state so the badge still resolves.
+            if vision_started and not vision_result_sent:
+                state_vals = getattr(post_snapshot, "values", None) or {} if post_snapshot else {}
+                summary = _summarize_vision(state_vals.get("vision_extractions"))
+                yield sse({"type": "vision_result", "summary": summary, "count": len(summary)})
+                vision_result_sent = True
+
             pending = getattr(post_snapshot, "interrupts", None) if post_snapshot else None
             if pending:
                 payload = pending[0].value if hasattr(pending[0], "value") else pending[0]

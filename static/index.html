@@ -70,7 +70,12 @@
         </div>
 
         <div class="chat-input-area">
+            <div class="chat-attachments" id="chat-attachments" hidden></div>
             <div class="chat-input-row">
+                <button class="chat-attach" id="chat-attach" aria-label="Attach a wine label or wine list photo" title="Attach a wine label or wine list photo">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                </button>
+                <input type="file" id="chat-file" accept="image/*" multiple hidden>
                 <textarea class="chat-input" id="chat-input"
                           rows="1"></textarea>
                 <button class="chat-send" id="chat-send" aria-label="Send">

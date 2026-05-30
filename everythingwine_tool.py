@@ -1,8 +1,14 @@
 """
 Everything Wine Search Tool for BC Wine AI Agent (LangGraph)
 
-Scrapes search results from everythingwine.ca/catalogsearch/result/.
-No login required. Server-side rendered HTML.
+Scrapes search results from everythingwine.ca/catalogsearch/result/ (server-side
+rendered HTML, no login), then enriches each hit with per-store pickup availability.
+
+Per-store stock comes from Magento's public In-Store Pickup REST API
+(/rest/V1/inventory/in-store-pickup/pickup-locations) — guest-accessible, no auth.
+It needs the product SKU, which Everything Wine embeds as the image filename prefix
+(`<SKU>_<slug>.jpg`), so we extract it from the search HTML with no extra page fetch.
+Each search hit then costs one lightweight JSON call (run in parallel, capped).
 """
 
 import asyncio
@@ -11,11 +17,29 @@ import httpx
 from bs4 import BeautifulSoup
 from pydantic import BaseModel
 
+from query_fallback import search_with_fallback
+
 
 # ── Config ──────────────────────────────────────────────────────────
 
 BASE_URL = "https://www.everythingwine.ca"
 SEARCH_URL = f"{BASE_URL}/catalogsearch/result/"
+PICKUP_URL = f"{BASE_URL}/rest/V1/inventory/in-store-pickup/pickup-locations"
+
+# Huge radius so a single call returns ALL stores regardless of the coords passed.
+# The lat/lng only orders results by distance; the radius makes it exhaustive.
+_PICKUP_RADIUS = "20000000"
+_PICKUP_LAT = "49.2"   # Metro Vancouver — only affects ordering, not which stores
+_PICKUP_LNG = "-123.0"
+
+# Keep only the Lower Mainland stores (by stable pickup_location_code); the API also
+# returns Abbotsford and Victoria, which we drop. Set to None to keep every store.
+LOWER_MAINLAND_STORE_CODES = {
+    "riverdistrict",   # Vancouver
+    "northvancouver",  # North Vancouver
+    "southsurrey",     # South Surrey
+    "langleystore",    # Langley Store
+}
 
 HEADERS = {
     "User-Agent": (
@@ -34,8 +58,15 @@ class StockStatus(BaseModel):
     method: str          # "Warehouse delivery", "Pick up, delivery from store", "Check other stores"
     status: str          # "available", "unavailable", "other-store"
 
+class StoreAvailability(BaseModel):
+    store: str           # "Vancouver", "North Vancouver", "South Surrey", "Langley Store", ...
+    code: str | None = None     # pickup_location_code, e.g. "northvancouver"
+    status: str          # "available" | "unavailable"
+    quantity: int = 0    # exact units in stock at that store
+
 class EverythingWineResult(BaseModel):
     name: str
+    sku: str | None = None
     price: str | None = None
     regular_price: str | None = None
     on_sale: bool = False
@@ -43,32 +74,102 @@ class EverythingWineResult(BaseModel):
     url: str | None = None
     image_url: str | None = None
     stock: list[StockStatus] = []
+    # Per-store pickup availability for the Lower Mainland stores (Vancouver,
+    # North Vancouver, South Surrey, Langley) from the In-Store Pickup API. Empty
+    # if the SKU couldn't be resolved or the lookup was skipped/failed.
+    store_stock: list[StoreAvailability] = []
 
 
 # ── Core Search ─────────────────────────────────────────────────────
 
-def _clean_query(q: str) -> str:
-    """Strip apostrophes / smart quotes — some store backends silently zero-out
-    results when these are present (verified on Okanagan Cellars)."""
-    return q.replace("'", "").replace("’", "").replace("‘", "")
+def _sku_from_image(src: str | None) -> str | None:
+    """Everything Wine names product images `<SKU>_<slug>.jpg`, so the SKU is the
+    leading numeric run of the filename — extracted with no extra request."""
+    if not src:
+        return None
+    filename = src.split("/")[-1].split("?")[0]
+    m = re.match(r"^(\d{3,})[_.]", filename)
+    return m.group(1) if m else None
 
 
-async def search_everything_wine(query: str) -> list[EverythingWineResult]:
+async def _fetch_store_stock(client: httpx.AsyncClient, sku: str) -> list[StoreAvailability]:
+    """Query the public In-Store Pickup API for per-store availability of one SKU.
+    Returns [] on any failure so a stock lookup never breaks the search itself."""
+    params = {
+        "searchRequest[scopeCode]": "base",
+        "searchRequest[extensionAttributes][productsInfo][0][sku]": sku,
+        "searchRequest[extensionAttributes][strategy]": "point-of-sale-based",
+        "searchRequest[extensionAttributes][lat]": _PICKUP_LAT,
+        "searchRequest[extensionAttributes][lng]": _PICKUP_LNG,
+        "searchRequest[area][radius]": _PICKUP_RADIUS,
+        "searchRequest[area][searchTerm]": "",
+    }
+    try:
+        # Force JSON: the shared client's Accept header prefers application/xml,
+        # which Magento honors and would otherwise return XML for this REST call.
+        resp = await client.get(PICKUP_URL, params=params, headers={"Accept": "application/json"})
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return []
+
+    out: list[StoreAvailability] = []
+    for loc in data.get("items", []):
+        code = loc.get("pickup_location_code")
+        if LOWER_MAINLAND_STORE_CODES is not None and code not in LOWER_MAINLAND_STORE_CODES:
+            continue
+        inv = (loc.get("extension_attributes") or {}).get("inventory_status") or {}
+        out.append(StoreAvailability(
+            store=loc.get("name", ""),
+            code=code,
+            status="available" if inv.get("status") == 1 else "unavailable",
+            quantity=int(inv.get("quantity") or 0),
+        ))
+    return out
+
+
+async def search_everything_wine(
+    query: str,
+    with_store_stock: bool = True,
+    max_store_lookups: int = 12,
+) -> list[EverythingWineResult]:
     """
-    Search Everything Wine product catalogue.
+    Search Everything Wine product catalogue, with per-store pickup availability.
 
     Args:
         query: Wine name, winery, or varietal (e.g., "tantalus", "checkmate chardonnay")
+        with_store_stock: If True (default), enrich each hit with Lower Mainland
+            per-store stock (Vancouver, North Vancouver, South Surrey, Langley)
+            via the public In-Store Pickup API.
+        max_store_lookups: Cap on how many hits get the per-store lookup (one parallel
+            API call each), to bound latency on large result sets.
     """
     async with httpx.AsyncClient(follow_redirects=True, timeout=15.0, headers=HEADERS) as client:
-        resp = await client.get(SEARCH_URL, params={"q": _clean_query(query)})
-        resp.raise_for_status()
+        # The Elasticsuite search AND-matches every token, so a full label string
+        # ("Mission Hill Perpetua 2022 Chardonnay") can return 0 even when the wine is
+        # stocked. search_with_fallback retries with trimmed queries (see query_fallback).
+        async def attempt(q: str) -> list[EverythingWineResult]:
+            resp = await client.get(SEARCH_URL, params={"q": q})
+            resp.raise_for_status()
+            search_div = BeautifulSoup(resp.text, "html.parser").select_one("div.search.results")
+            return _parse_results(search_div) if search_div else []
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    search_div = soup.select_one("div.search.results")
-    if not search_div:
-        return []
+        results = await search_with_fallback(attempt, query)
 
+        # Enrich top hits with per-store availability (parallel; failures → []).
+        if with_store_stock and results:
+            targets = [r for r in results if r.sku][:max_store_lookups]
+            if targets:
+                stocks = await asyncio.gather(
+                    *(_fetch_store_stock(client, r.sku) for r in targets)
+                )
+                for r, st in zip(targets, stocks):
+                    r.store_stock = st
+
+    return results
+
+
+def _parse_results(search_div) -> list[EverythingWineResult]:
     results: list[EverythingWineResult] = []
 
     for item in search_div.select("li.product-item"):
@@ -107,9 +208,10 @@ async def search_everything_wine(query: str) -> list[EverythingWineResult]:
         if attr_el:
             country = attr_el.get_text(strip=True)
 
-        # Image
+        # Image — also the SKU source (filename is `<SKU>_<slug>.jpg`).
         img_el = item.select_one("img.product-image-photo")
-        image_url = img_el.get("src") if img_el else None
+        image_url = (img_el.get("src") or img_el.get("data-src")) if img_el else None
+        sku = _sku_from_image(image_url)
 
         # Availability — parse stock status from nested spans
         # Structure: <span class="stock product-item-stock">
@@ -140,6 +242,7 @@ async def search_everything_wine(query: str) -> list[EverythingWineResult]:
         results.append(
             EverythingWineResult(
                 name=name,
+                sku=sku,
                 price=price,
                 regular_price=regular_price,
                 on_sale=on_sale,
@@ -183,6 +286,13 @@ def format_results(results: list[EverythingWineResult], query: str) -> str:
                 else:
                     stock_lines.append(f"❓ {s.method}")
             parts.append(f"   Stock: {' | '.join(stock_lines)}")
+        if r.store_stock:
+            avail = [f"{s.store} ({s.quantity})" for s in r.store_stock if s.status == "available"]
+            oos = [s.store for s in r.store_stock if s.status != "available"]
+            if avail:
+                parts.append(f"   Pickup in stock: {', '.join(avail)}")
+            if oos:
+                parts.append(f"   Pickup out of stock: {', '.join(oos)}")
         if r.url:
             parts.append(f"   URL: {r.url}")
 

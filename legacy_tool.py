@@ -11,6 +11,8 @@ import asyncio
 import httpx
 from pydantic import BaseModel
 
+from query_fallback import search_with_fallback
+
 
 # -- Config ------------------------------------------------------------------
 
@@ -117,61 +119,19 @@ def _clean_query(q: str) -> str:
     return q.replace("‘", "’").replace("’", "’")
 
 
-async def search_legacy(
-    query: str,
-    limit: int = 30,
-    price_min: float | None = None,
-    price_max: float | None = None,
-    on_sale: bool | None = None,
-    staff_pick: bool | None = None,
-    country: str | None = None,
-    region: str | None = None,
-    tags: list[str] | None = None,
+async def _legacy_search_once(
+    client: httpx.AsyncClient, base_variables: dict, search_value: str
 ) -> tuple[list[LegacyResult], int]:
-    """
-    Search Legacy Liquor Store inventory via GraphQL.
+    """One GraphQL search for an already-cleaned searchValue, reusing the caller's
+    filter variables (price, tags, ...). Returns (results, total_count)."""
+    variables = {**base_variables, "searchValue": search_value}
 
-    Args:
-        query:      Wine name, winery, or varietal
-        limit:      Max results (default 30)
-        price_min:  Minimum price filter
-        price_max:  Maximum price filter
-        on_sale:    Only sale items
-        staff_pick: Only staff picks
-        country:    Filter by country
-        region:     Filter by region
-        tags:       Filter by tag slugs (e.g. ["pinot-noir", "red-wine"])
-
-    Returns:
-        (results, total_count)
-    """
-    variables: dict = {
-        "storeId": STORE_ID,
-        "searchValue": _clean_query(query),
-        "pageLimit": limit,
-    }
-    if price_min is not None:
-        variables["priceMin"] = price_min
-    if price_max is not None:
-        variables["priceMax"] = price_max
-    if on_sale is not None:
-        variables["isOnSale"] = on_sale
-    if staff_pick is not None:
-        variables["isStaffPick"] = staff_pick
-    if country is not None:
-        variables["countries"] = [country]
-    if region is not None:
-        variables["regions"] = [region]
-    if tags is not None:
-        variables["anyTags"] = tags
-
-    async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
-        resp = await client.post(
-            API_URL,
-            json={"query": PRODUCTS_QUERY, "variables": variables},
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    resp = await client.post(
+        API_URL,
+        json={"query": PRODUCTS_QUERY, "variables": variables},
+    )
+    resp.raise_for_status()
+    data = resp.json()
 
     if "errors" in data:
         error_msg = data["errors"][0].get("message", "Unknown GraphQL error")
@@ -228,6 +188,69 @@ async def search_legacy(
         )
 
     return results, total
+
+
+async def search_legacy(
+    query: str,
+    limit: int = 30,
+    price_min: float | None = None,
+    price_max: float | None = None,
+    on_sale: bool | None = None,
+    staff_pick: bool | None = None,
+    country: str | None = None,
+    region: str | None = None,
+    tags: list[str] | None = None,
+) -> tuple[list[LegacyResult], int]:
+    """
+    Search Legacy Liquor Store inventory via GraphQL.
+
+    The search AND-matches query tokens, so a full label string can return 0 even when
+    the wine is stocked; search_with_fallback retries with trimmed queries (see
+    query_fallback). Legacy needs the apostrophe preserved (Martin's Lane), so its own
+    _clean_query — which normalizes smart quotes rather than stripping them — is used.
+
+    Args:
+        query:      Wine name, winery, or varietal
+        limit:      Max results (default 30)
+        price_min:  Minimum price filter
+        price_max:  Maximum price filter
+        on_sale:    Only sale items
+        staff_pick: Only staff picks
+        country:    Filter by country
+        region:     Filter by region
+        tags:       Filter by tag slugs (e.g. ["pinot-noir", "red-wine"])
+
+    Returns:
+        (results, total_count)
+    """
+    base_variables: dict = {"storeId": STORE_ID, "pageLimit": limit}
+    if price_min is not None:
+        base_variables["priceMin"] = price_min
+    if price_max is not None:
+        base_variables["priceMax"] = price_max
+    if on_sale is not None:
+        base_variables["isOnSale"] = on_sale
+    if staff_pick is not None:
+        base_variables["isStaffPick"] = staff_pick
+    if country is not None:
+        base_variables["countries"] = [country]
+    if region is not None:
+        base_variables["regions"] = [region]
+    if tags is not None:
+        base_variables["anyTags"] = tags
+
+    # The fallback returns only the result list; capture the matching total via a holder.
+    captured = {"total": 0}
+
+    async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
+        async def attempt(q: str) -> list[LegacyResult]:
+            items, total = await _legacy_search_once(client, base_variables, q)
+            captured["total"] = total
+            return items
+
+        results = await search_with_fallback(attempt, query, clean=_clean_query)
+
+    return results, captured["total"]
 
 
 # -- Formatting --------------------------------------------------------------

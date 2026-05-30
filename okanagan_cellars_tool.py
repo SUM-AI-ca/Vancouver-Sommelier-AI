@@ -14,6 +14,8 @@ import time
 import httpx
 from pydantic import BaseModel
 
+from query_fallback import search_with_fallback
+
 
 # ── Config ──────────────────────────────────────────────────────────
 
@@ -49,22 +51,10 @@ class OkanaganCellarsResult(BaseModel):
 
 # ── Core Search ─────────────────────────────────────────────────────
 
-def _clean_query(q: str) -> str:
-    """Strip apostrophes and smart quotes — Okanagan Cellars' backend search
-    returns 0 results when these are present (e.g. "Quails' Gate" → 0,
-    "Quails Gate" → 15). Stripping is safe for the other punctuation we see."""
-    return q.replace("'", "").replace("’", "").replace("‘", "")
-
-
-async def search_okanagan_cellars(query: str) -> list[OkanaganCellarsResult]:
-    """
-    Search Okanagan Cellars wine inventory.
-
-    Args:
-        query: Wine name, winery, or varietal (e.g., "tantalus", "checkmate", "pinot noir")
-    """
+async def _search_once(client: httpx.AsyncClient, query: str) -> list[OkanaganCellarsResult]:
+    """One API call + parse for an already-cleaned query string."""
     params = {
-        "q": _clean_query(query),
+        "q": query,
         "show_on_web": "true",
         "varital_name": "",
         "no_item_found": "No item found.",
@@ -72,10 +62,9 @@ async def search_okanagan_cellars(query: str) -> list[OkanaganCellarsResult]:
         "_dc": str(int(time.time() * 1000)),
     }
 
-    async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
-        resp = await client.get(API_URL, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+    resp = await client.get(API_URL, params=params)
+    resp.raise_for_status()
+    data = resp.json()
 
     items = data.get("items", [])
     results: list[OkanaganCellarsResult] = []
@@ -114,6 +103,22 @@ async def search_okanagan_cellars(query: str) -> list[OkanaganCellarsResult]:
         )
 
     return results
+
+
+async def search_okanagan_cellars(query: str) -> list[OkanaganCellarsResult]:
+    """
+    Search Okanagan Cellars wine inventory.
+
+    The backend AND-matches every query token against the product title, so a full
+    label string ("Mission Hill Perpetua 2022 Chardonnay") can return 0 even though
+    the wine is in stock (title "MISSION HILL - PERPETUA 2022", no "Chardonnay").
+    search_with_fallback retries with progressively trimmed queries (see query_fallback).
+
+    Args:
+        query: Wine name, winery, or varietal (e.g., "tantalus", "checkmate", "pinot noir")
+    """
+    async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
+        return await search_with_fallback(lambda q: _search_once(client, q), query)
 
 
 # ── Formatting ──────────────────────────────────────────────────────
