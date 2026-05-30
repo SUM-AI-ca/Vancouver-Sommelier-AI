@@ -2,13 +2,96 @@
 
 BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으로 여러 와인 사이트의 데이터를 통합해서 사용자 질문에 답변한다.
 
-현재 단계: **LangGraph 에이전트 코어 구현 완료. FastAPI + SSE 스트리밍 + 와인 컬러 풀스크린 채팅 UI 동작 중. Pre-agent query validation gate 추가 (off-topic 쿼리는 그래프 우회). 멀티모달 vision 노드 추가 — 와인 라벨/레스토랑 와인리스트 사진을 스캔해 검색/추천으로 연결. Docker 컨테이너 배포 준비 완료. Golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중.**
+**Live: [wineaiagent.com](https://wineaiagent.com)**
+
+현재 단계: **프로덕션 배포 완료.** Cloudflare Pages (프론트엔드) + Google Cloud Run (백엔드 API) 분리 호스팅. LangGraph ReAct 에이전트 13개 tool, FastAPI SSE 스트리밍, 멀티모달 vision 노드 (와인 라벨/와인리스트 사진 스캔), human-in-the-loop clarification, pre-agent query validation gate, golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중.
+
+---
+
+## 전체 구조
+
+```
+사용자 질문 (+ 와인 라벨/리스트 사진 첨부 가능)
+    ↓
+Cloudflare Pages (frontend/ — vanilla HTML/CSS/JS, 빌드 스텝 없음)
+    ↓  CORS (cross-origin fetch)
+Google Cloud Run — FastAPI 백엔드 (app.py — SSE 스트리밍)
+    ↓
+Validation Gate (validation.py — Gemini Flash 분류)   ※ 이미지 첨부 시 우회
+    │
+    ├─ INVALID → 사용자 언어로 거절 → 그래프 우회 → 종료
+    │
+    └─ VALID ↓
+LangGraph Agent (agent.py — Gemini 3.5 Flash, 13개 tool)
+    │
+    │   entry_router ─(이미지)─→ vision_node ─┐
+    │                └─(텍스트)──────────────┴→ orchestrator
+    │   orchestrator → tools → orchestrator (loop)   ※ 툴 에러는 격리되어 계속 진행
+    │                     ↓ (ask_user_clarification_tool)
+    │                  interrupt() → SSE clarification_request → 유저 응답
+    │                     ↓ Command(resume=...) → 다음 orchestrator round
+    │                                                       ↓ (no tool_calls)
+    │   orchestrator 최종 답변 → END  (별도 synthesis 노드 없음)
+    ↓
+┌──────────────────────────────────────────────────────────┐
+│  Tools (데이터 수집 — 모두 완성)                           │
+│                                                          │
+│  winealign_tool.py ──── 전문가 리뷰 & 점수                │
+│  bcliquor_tool.py ───── 가격 & 재고 (공식 주류 판매)       │
+│  okanagan_cellars_tool.py ── 밴쿠버 와인샵 재고            │
+│  marquis_tool.py ────── 밴쿠버 큐레이션 와인샵             │
+│  legacy_tool.py ─────── 밴쿠버 프리미엄 와인샵             │
+│  liberty_tool.py ────── 밴쿠버 대형 독립 와인샵            │
+│  everythingwine_tool.py ── 밴쿠버 와인샵 재고 + 매장별 수량 │
+│  gismondi_tool.py ───── BC/캐나다 와인 평론 (로컬 DB)      │
+│  robert_parker_tool.py ── Robert Parker 평점/리뷰          │
+│  tavily_tool.py ─────── 웹 검색 fallback                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 배포 아키텍처
+
+프론트엔드와 백엔드를 분리 배포한다.
+
+| 계층 | 서비스 | URL |
+|------|--------|-----|
+| **프론트엔드** | Cloudflare Pages | `wineaiagent.com` / `www.wineaiagent.com` |
+| **백엔드 API** | Google Cloud Run | `bc-wine-agent-135257828500.us-west1.run.app` |
+
+- 프론트엔드(`frontend/`)는 Cloudflare Pages에 직접 배포. 빌드 커맨드 없음, 출력 디렉토리 `frontend/`.
+- 백엔드는 Docker 이미지로 빌드해 Cloud Run에 배포. Gemini API는 GCP 서비스 계정 인증으로 호출.
+- 프론트엔드 JS(`frontend/app.js`)가 `API_BASE`로 Cloud Run URL을 직접 호출하고, `app.py`의 `CORSMiddleware`가 `wineaiagent.com` / `www.wineaiagent.com` origin을 허용한다.
+- 로컬 개발 시에는 `API_BASE`가 빈 문자열이 되어 같은 서버의 `/api/*` 엔드포인트를 호출.
+
+### Cloud Run 배포
+
+```bash
+gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agent-jh-2026 --allow-unauthenticated
+```
+
+Cloud Run 서비스 계정에 필요한 IAM 역할:
+- `roles/aiplatform.user` — Gemini API 호출
+- `roles/run.invoker` (allUsers) — 퍼블릭 접근
+
+### Cloudflare Pages 배포
+
+Cloudflare Pages 프로젝트 설정:
+- **Production branch**: `main`
+- **Build command**: (없음)
+- **Build output directory**: `frontend`
+- **Custom domains**: `wineaiagent.com`, `www.wineaiagent.com`
+
+---
+
+## 핵심 기능
 
 ### Query Validation Gate
 
 `/api/chat`이 그래프를 호출하기 **전에** 한 번의 Gemini Flash 분류 호출로 쿼리가 에이전트 범위(와인 / 페어링 / 인사) 안에 있는지 판정한다. Off-topic이면 (날씨, 스포츠, 코딩 질문 등) 그래프를 건너뛰고 **사용자 입력 언어 그대로** 짧은 거절 메시지를 SSE 토큰으로 흘려보낸다. 한국어 질문엔 한국어, 영어 질문엔 영어로 자동 응답. 검증 LLM이 실패하면 fail-open으로 기존 에이전트 경로로 그대로 진입 — 오케스트레이터의 Guideline G5 (off-topic 처리)가 백스톱 역할. 실측 오프토픽 응답 시간 ~2.6s (기존 ~10s+).
 
-구현: [`validation.py`](validation.py) (Pydantic `ValidationResult` + `validate_query()`), [`prompts.py`](prompts.py)의 `VALIDATION_SYSTEM_PROMPT`, [`app.py`](app.py) 게이트 삽입.
+구현: [`validation.py`](validation.py), [`prompts.py`](prompts.py)의 `VALIDATION_SYSTEM_PROMPT`, [`app.py`](app.py) 게이트 삽입.
 
 ### Human-in-the-Loop Clarification
 
@@ -46,7 +129,9 @@ BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으�
 
 구현: [`safety.py`](safety.py)의 `tool_error_to_json` + [`agent.py`](agent.py) ToolNode 연결 + [`prompts.py`](prompts.py) G8, [`tools/query_fallback.py`](tools/query_fallback.py)의 `search_with_fallback` (okanagan/everythingwine/legacy/liberty 공유).
 
-### UI/UX
+---
+
+## UI/UX
 
 - **랜딩 + 풀스크린 채팅 오버레이** — 간단한 capability 설명이 있는 랜딩 페이지에서 "Start chatting" 버튼을 누르면 화면을 가득 채우는 채팅 오버레이가 뜬다.
 - **연한 와인 컬러 팔레트** — 기존 SUM AI 파란색에서 데사추레이트된 burgundy(`#7A3D4F`) 톤으로 교체.
@@ -57,49 +142,6 @@ BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으�
 - **링크는 새 탭** — `marked.parse` 결과 모든 `<a>` 태그에 `target="_blank" rel="noopener noreferrer"` 자동 주입.
 
 상세 아키텍처 설계는 [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md)에 다 정리해놨다.
-
----
-
-## 전체 구조
-
-```
-사용자 질문 (+ 와인 라벨/리스트 사진 첨부 가능)
-    ↓
-HTML/CSS/JS 프론트엔드 (frontend/ — 와인 컬러 채팅 모달, 이미지 첨부)
-    ↓
-FastAPI 백엔드 (app.py — SSE 스트리밍)
-    ↓
-Validation Gate (validation.py — Gemini Flash 분류)   ※ 이미지 첨부 시 우회
-    │
-    ├─ INVALID → 사용자 언어로 거절 → 그래프 우회 → 종료
-    │
-    └─ VALID ↓
-LangGraph Agent (agent.py — Gemini 3.5 Flash, 13개 tool)
-    │
-    │   entry_router ─(이미지)─→ vision_node ─┐
-    │                └─(텍스트)──────────────┴→ orchestrator
-    │   orchestrator → tools → orchestrator (loop)   ※ 툴 에러는 격리되어 계속 진행
-    │                     ↓ (ask_user_clarification_tool)
-    │                  interrupt() → SSE clarification_request → 유저 응답
-    │                     ↓ Command(resume=...) → 다음 orchestrator round
-    │                                                       ↓ (no tool_calls)
-    │   orchestrator 최종 답변 → END  (별도 synthesis 노드 없음)
-    ↓
-┌──────────────────────────────────────────────────────────┐
-│  Tools (데이터 수집 — 모두 완성)                           │
-│                                                          │
-│  winealign_tool.py ──── 전문가 리뷰 & 점수                │
-│  bcliquor_tool.py ───── 가격 & 재고 (공식 주류 판매)       │
-│  okanagan_cellars_tool.py ── 밴쿠버 와인샵 재고            │
-│  marquis_tool.py ────── 밴쿠버 큐레이션 와인샵             │
-│  legacy_tool.py ─────── 밴쿠버 프리미엄 와인샵             │
-│  liberty_tool.py ────── 밴쿠버 대형 독립 와인샵            │
-│  everythingwine_tool.py ── 밴쿠버 와인샵 재고 + 매장별 수량 │
-│  gismondi_tool.py ───── BC/캐나다 와인 평론 (로컬 DB)      │
-│  robert_parker_tool.py ── Robert Parker 평점/리뷰          │
-│  tavily_tool.py ─────── 웹 검색 fallback                  │
-└──────────────────────────────────────────────────────────┘
-```
 
 ---
 
@@ -124,7 +166,7 @@ LangGraph Agent (agent.py — Gemini 3.5 Flash, 13개 tool)
 
 ### 1. WineAlign (`tools/winealign_tool.py`)
 
-캐나다 최대 와인 리뷰 플랫폼. **월 구독료를 내야** 전문가 리뷰를 볼 수 있다. 검색 가능한 JSON API를 따로 못 찾아서, 구독하고 내 계정으로 로그인한 뒤 웹페이지를 파싱하는 방식으로 만들었다.
+캐나다 최대 와인 리뷰 플랫폼. 검색 가능한 JSON API를 따로 못 찾아서, 구독하고 로그인한 뒤 웹페이지를 파싱하는 방식으로 만들었다.
 
 - **인증**: `authenticity_token` + `person_credentials` 쿠키 기반 세션
 - **자동 재로그인**: 세션 만료되면 `/login` 리다이렉트 감지해서 자동으로 다시 로그인
@@ -257,7 +299,7 @@ results, answer = await search_tavily("best food pairings for BC Pinot Noir")
 ```
 BC-wine-ai-agents/
 ├── agent.py                    # LangGraph 그래프 빌더 (entry_router + vision + ReAct 13 tools)
-├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, 멀티모달 입력, validation 게이트)
+├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, CORS, 멀티모달 입력, validation 게이트)
 ├── validation.py               # Pre-agent query 검증 (off-topic 쿼리 그래프 우회)
 ├── vision.py                   # 멀티모달 라벨/와인리스트 추출 (VisionExtraction 스키마)
 ├── state.py                    # AgentState TypedDict (messages + tool_call_log + vision_extractions)
@@ -265,9 +307,10 @@ BC-wine-ai-agents/
 ├── prompts.py                  # 오케스트레이터/페어링/relevance-filter/검증/vision 시스템 프롬프트
 ├── safety.py                   # tool_error_to_json (툴 예외 → status:error JSON, ToolNode 격리)
 ├── requirements.txt            # Python 패키지 의존성
-├── Dockerfile                  # 컨테이너 빌드 (python:3.12-slim, uvicorn)
+├── Dockerfile                  # 컨테이너 빌드 (python:3.12-slim, uvicorn, port 8080)
 ├── .dockerignore               # Docker 빌드 제외 목록
 ├── tools/                      # 데이터 수집 도구 모음
+│   ├── __init__.py
 │   ├── winealign_tool.py       # WineAlign 검색
 │   ├── bcliquor_tool.py        # BC Liquor Store 검색
 │   ├── okanagan_cellars_tool.py # Okanagan Cellars 검색
@@ -282,8 +325,7 @@ BC-wine-ai-agents/
 ├── frontend/                   # 프론트엔드 (vanilla HTML/CSS/JS, 빌드 스텝 없음)
 │   ├── index.html              # 랜딩 페이지 + 풀스크린 채팅 오버레이
 │   ├── styles.css              # 와인 컬러 팔레트, 채팅 + 툴 배지 스타일
-│   ├── app.js                  # SSE 클라이언트, 이미지 첨부/다운스케일, 툴 배지, 마크다운 렌더링
-│   └── _redirects              # Netlify 리버스 프록시 (API → Cloud Run)
+│   └── app.js                  # SSE 클라이언트, CORS API_BASE, 이미지 첨부, 툴 배지, 마크다운
 ├── scripts/                    # 유틸리티 스크립트
 │   ├── build_db.py             # CSV → SQLite 빌드 스크립트
 │   ├── debug_everythingwine.py # Everything Wine HTML 구조 확인용
@@ -380,17 +422,30 @@ python -m tools.gismondi_tool
 
 ## 서버 실행
 
+### 로컬 개발
+
 ```bash
 python -m uvicorn app:app --port 8000
 ```
 
 브라우저에서 `http://localhost:8000` 열면 채팅 UI가 뜬다.
 
-### Docker
+### Docker (로컬)
 
 ```bash
 docker build -t bc-wine-agent .
 docker run -p 8080:8080 --env-file .env bc-wine-agent
+```
+
+### 프로덕션 배포
+
+```bash
+# Cloud Run 배포 (백엔드)
+gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agent-jh-2026 --allow-unauthenticated
+
+# Cloudflare Pages 배포 (프론트엔드)
+# Cloudflare Dashboard → Workers & Pages → bcwineaiagents 프로젝트
+# GitHub 연동으로 main 브랜치 push 시 자동 배포
 ```
 
 ---
@@ -400,13 +455,16 @@ docker run -p 8080:8080 --env-file .env bc-wine-agent
 - **LangGraph** — ReAct 에이전트 오케스트레이션 (13개 tool, 병렬 실행)
 - **Gemini 3.5 Flash (langchain-google-genai)** — 모든 노드에서 사용하는 LLM (멀티모달 — vision 노드에서 라벨/와인리스트 이미지 분석)
 - **FastAPI** — SSE 스트리밍 백엔드
-- **HTML/CSS/JS** — SUM AI 디자인 계승 채팅 UI (vanilla, 빌드 스텝 없음)
+- **HTML/CSS/JS** — 와인 컬러 채팅 UI (vanilla, 빌드 스텝 없음)
+- **Google Cloud Run** — 백엔드 컨테이너 호스팅
+- **Cloudflare Pages** — 프론트엔드 정적 호스팅 + 커스텀 도메인
 - **httpx** — async HTTP 클라이언트 (세션/쿠키 관리 포함)
 - **BeautifulSoup4** — HTML 파싱 (WineAlign, Everything Wine)
 - **Pydantic** — 데이터 모델 & 유효성 검사
 - **SQLite + FTS5** — Gismondi 리뷰 로컬 DB (Python 표준 라이브러리)
 - **LangSmith** — 트레이스/관측 (환경변수 설정 시 자동 활성화)
 - **python-dotenv** — 환경변수 로딩
+- **Docker** — 컨테이너 빌드 (python:3.12-slim)
 
 ---
 
