@@ -20,11 +20,14 @@ function initTurnstile() {
 
 async function getTurnstileToken() {
   if (typeof turnstile === "undefined") return null;
-  if (turnstileToken) {
-    const token = turnstileToken;
-    turnstileToken = null;
-    turnstile.reset(turnstileWidgetId);
-    return token;
+  for (let i = 0; i < 20; i++) {
+    if (turnstileToken) {
+      const token = turnstileToken;
+      turnstileToken = null;
+      turnstile.reset(turnstileWidgetId);
+      return token;
+    }
+    await new Promise((r) => setTimeout(r, 250));
   }
   return null;
 }
@@ -378,17 +381,24 @@ async function sendMessage() {
   let currentRunId = null;
 
   try {
-    const cfToken = await getTurnstileToken();
-    const res = await fetch(`${API_BASE}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        thread_id: threadId,
-        message: text,
-        images: images.length ? images : undefined,
-        cf_turnstile_token: cfToken,
-      }),
-    });
+    async function doChat() {
+      const cfToken = await getTurnstileToken();
+      return fetch(`${API_BASE}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          thread_id: threadId,
+          message: text,
+          images: images.length ? images : undefined,
+          cf_turnstile_token: cfToken,
+        }),
+      });
+    }
+
+    let res = await doChat();
+    if (res.status === 403) {
+      res = await doChat();
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
