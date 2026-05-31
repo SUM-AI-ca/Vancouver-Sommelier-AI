@@ -1,0 +1,6 @@
+compatibility_date = "2024-09-01"
+pages_build_output_dir = "./frontend"
+
+[vars]
+BACKEND_URL = "https://bc-wine-agent-135257828500.us-west1.run.app"
+PROXY_SECRET = "Lk9s7vR7SzB3k3ag1mcMuxFtPe8NQ4fqcmPBiKCfEVM"
