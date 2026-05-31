@@ -1,6 +1,9 @@
+const DEFAULT_BACKEND = "https://bc-wine-agent-135257828500.us-west1.run.app";
+const DEFAULT_SECRET = "Lk9s7vR7SzB3k3ag1mcMuxFtPe8NQ4fqcmPBiKCfEVM";
+
 export async function onRequest(context) {
-  const BACKEND = context.env.BACKEND_URL;
-  const SECRET = context.env.PROXY_SECRET;
+  const BACKEND = context.env.BACKEND_URL || DEFAULT_BACKEND;
+  const SECRET = context.env.PROXY_SECRET || DEFAULT_SECRET;
 
   if (!BACKEND) {
     return new Response("Backend not configured", { status: 502 });
