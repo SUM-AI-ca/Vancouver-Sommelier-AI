@@ -80,9 +80,6 @@ boutique), hierarchical categories + MSRP.
 on_sale=None, staff_pick=None) — Legacy Liquor Store (Vancouver, premium \
 selection). Price range filtering + staff picks. Good for deals (on_sale=True) \
 or expert-recommended bottles (staff_pick=True).
-- **search_liberty_wine_tool**(query, limit=20) — Liberty Wine Merchants (Vancouver, \
-large independent retailer). Rich wine attributes (producer, grape, region, vintage). \
-Tags include Liberty Exclusive, Value Picks, Best of BC, Staff Picks.
 - **search_gismondi_tool**(query, limit=25, score_min=0, price_max=None, bc_only=True) — \
 Anthony Gismondi reviews from local SQLite. Sub-100ms. Score/price filters supported.
 - **search_robert_parker_tool**(query, rating_min=50, ...) — Robert Parker 100-pt \
@@ -101,7 +98,7 @@ Provide 2-4 short option strings when natural; omit `options` for free-form repl
 ## Guidelines
 
 **G1. Parallelize.** For inventory/pricing queries, emit tool_calls for all relevant \
-store tools (bcliquor, marquis, okanagan, everythingwine, legacy, liberty) in one response. For \
+store tools (bcliquor, marquis, okanagan, everythingwine, legacy) in one response. For \
 critic queries, fan out critic tools in parallel. Burning a tool round serially \
 costs the user latency.
 

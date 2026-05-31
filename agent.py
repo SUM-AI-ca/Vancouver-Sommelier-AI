@@ -18,7 +18,6 @@ from tools.bcliquor_tool import search_bcliquor
 from tools.everythingwine_tool import search_everything_wine
 from tools.gismondi_tool import search_gismondi
 from tools.legacy_tool import search_legacy as search_legacy_liquor_store
-from tools.liberty_tool import search_liberty
 from tools.marquis_tool import search_marquis
 from tools.okanagan_cellars_tool import search_okanagan_cellars
 from tools.robert_parker_tool import search_robert_parker
@@ -102,16 +101,6 @@ async def search_legacy_liquor_store_tool(
         on_sale=on_sale, staff_pick=staff_pick,
     )
     return json.dumps({"status": "ok", "tool": "search_legacy_liquor_store", "total": total, "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_liberty_wine_tool(query: str, limit: int = 20) -> str:
-    """Search Liberty Wine Merchants (Vancouver, large independent retailer) for wines with producer, grape, region, and vintage attributes.
-    Tags include Liberty Exclusive, Value Picks, Best of BC, Staff Picks.
-    Use for broad selection searches or BC wine discovery alongside other retailer tools.
-    """
-    results, total = await search_liberty(query, limit=limit)
-    return json.dumps({"status": "ok", "tool": "search_liberty_wine", "total": total, "results": [r.model_dump() for r in results]})
 
 
 @tool
@@ -255,7 +244,6 @@ TOOLS = [
     search_okanagan_cellars_tool,
     search_marquis_tool,
     search_legacy_liquor_store_tool,
-    search_liberty_wine_tool,
     search_gismondi_tool,
     search_robert_parker_tool,
     search_tavily_tool,

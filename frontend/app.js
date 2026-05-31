@@ -39,7 +39,6 @@ const TOOL_LABELS = {
   search_okanagan_cellars_tool: "Okanagan Cellars",
   search_marquis_tool: "Marquis Wine Cellars",
   search_legacy_liquor_store_tool: "Legacy Liquor Store",
-  search_liberty_wine_tool: "Liberty Wine Merchants",
   search_tavily_tool: "Web Search",
   search_gismondi_tool: "Gismondi On Wine",
   search_robert_parker_tool: "Robert Parker",
