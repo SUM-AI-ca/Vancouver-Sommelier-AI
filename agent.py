@@ -20,6 +20,7 @@ from tools.gismondi_tool import search_gismondi
 from tools.legacy_tool import search_legacy as search_legacy_liquor_store
 from tools.marquis_tool import search_marquis
 from tools.okanagan_cellars_tool import search_okanagan_cellars
+from tools.suttonplace_tool import search_suttonplace
 from tools.robert_parker_tool import search_robert_parker
 from tools.tavily_tool import search_tavily
 from tools.winealign_tool import search_winealign
@@ -72,6 +73,15 @@ async def search_okanagan_cellars_tool(query: str) -> str:
     """
     results = await search_okanagan_cellars(query)
     return json.dumps({"status": "ok", "tool": "search_okanagan_cellars", "results": [r.model_dump() for r in results]})
+
+
+@tool
+async def search_suttonplace_tool(query: str) -> str:
+    """Search Sutton Place Wine Merchant (Vancouver, Yaletown) for wines with stock, vintage, varietal, and staff picks.
+    Use when checking Yaletown wine shop availability or vintage-specific inventory.
+    """
+    results = await search_suttonplace(query)
+    return json.dumps({"status": "ok", "tool": "search_suttonplace", "results": [r.model_dump() for r in results]})
 
 
 @tool
@@ -242,6 +252,7 @@ TOOLS = [
     search_winealign_tool,
     search_everything_wine_tool,
     search_okanagan_cellars_tool,
+    search_suttonplace_tool,
     search_marquis_tool,
     search_legacy_liquor_store_tool,
     search_gismondi_tool,

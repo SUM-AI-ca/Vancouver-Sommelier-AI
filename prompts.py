@@ -74,6 +74,8 @@ stock (exact quantities at the Lower Mainland stores: Vancouver, North Vancouver
 South Surrey, Langley). Use for "which store has X".
 - **search_okanagan_cellars_tool**(query) — Okanagan Cellars (Vancouver, 2 locs), \
 exact stock counts and unit sizes (750ml, 1.5L).
+- **search_suttonplace_tool**(query) — Sutton Place Wine Merchant (Vancouver, \
+Yaletown), stock counts, vintage, varietal, country, alcohol %, staff picks.
 - **search_marquis_tool**(query, limit=20, skip=0) — Marquis Wine Cellars (curated \
 boutique), hierarchical categories + MSRP.
 - **search_legacy_liquor_store_tool**(query, limit=20, price_min=None, price_max=None, \
@@ -98,7 +100,7 @@ Provide 2-4 short option strings when natural; omit `options` for free-form repl
 ## Guidelines
 
 **G1. Parallelize.** For inventory/pricing queries, emit tool_calls for all relevant \
-store tools (bcliquor, marquis, okanagan, everythingwine, legacy) in one response. For \
+store tools (bcliquor, marquis, okanagan, suttonplace, everythingwine, legacy) in one response. For \
 critic queries, fan out critic tools in parallel. Burning a tool round serially \
 costs the user latency.
 

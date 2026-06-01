@@ -43,7 +43,7 @@
 
 ### Purpose
 
-The BC Wine AI Agent is a domain-specific conversational assistant that answers questions about British Columbia (BC) wines by unifying data across **professional critic reviews**, **retail inventory**, **pricing**, and **general wine education**. It is built on LangGraph and acts as a single ReAct agent that orchestrates twelve tools — nine data/search tools (§3) plus the `reasoning_pair_wine`, `update_preferences`, and `ask_user_clarification` helpers.
+The BC Wine AI Agent is a domain-specific conversational assistant that answers questions about British Columbia (BC) wines by unifying data across **professional critic reviews**, **retail inventory**, **pricing**, and **general wine education**. It is built on LangGraph and acts as a single ReAct agent that orchestrates thirteen tools — ten data/search tools (§3) plus the `reasoning_pair_wine`, `update_preferences`, and `ask_user_clarification` helpers.
 
 ### Target Users
 
@@ -185,7 +185,7 @@ The interface meets all of them at their level — the same chat surface answers
 
 ## 3. Tool Inventory
 
-Nine data/search tools — all implemented. (Three more tools — `reasoning_pair_wine`, `update_preferences`, `ask_user_clarification` — are registered alongside these; see §4.6 and §9.) Specifications below match the shipping code.
+Ten data/search tools — all implemented. (Three more tools — `reasoning_pair_wine`, `update_preferences`, `ask_user_clarification` — are registered alongside these; see §4.6 and §9.) Specifications below match the shipping code.
 
 ### Summary Table
 
@@ -195,11 +195,12 @@ Nine data/search tools — all implemented. (Three more tools — `reasoning_pai
 | 2 | `winealign_tool.py` | WineAlign critic reviews | required | `list[WineAlignResult]` | ~2–5 s | Multi-critic professional reviews + drink windows (review detail pages fetched in parallel) |
 | 3 | `everythingwine_tool.py` | Everything Wine (Vancouver) | none | `list[EverythingWineResult]` | ~2 s | Pickup/delivery availability |
 | 4 | `okanagan_cellars_tool.py` | Okanagan Cellars (Vancouver, 2 locations) | none | `list[OkanaganCellarsResult]` | ~1 s | Exact stock counts, large-format bottles |
-| 5 | `marquis_tool.py` | Marquis Wine Cellars (Vancouver, curated) | none | `tuple[list[MarquisResult], int]` | ~1 s | Curated picks, MSRP, hierarchical categories |
-| 6 | `legacy_tool.py` | Legacy Liquor Store (Vancouver, premium) | none | `tuple[list[LegacyResult], int]` | ~1 s | Premium selection, staff picks, price filters, stock qty |
-| 7 | `tavily_tool.py` | Tavily web search API | required (paid) | `tuple[list[TavilyResult], str \| None]` | ~2 s | Pairings (niche cuisines), education, regions |
-| 8 | `gismondi_tool.py` | Anthony Gismondi reviews via local SQLite (FTS5) | none | `list[GismondiResult]` | < 100 ms | Canadian wine authority, deep tasting notes |
-| 9 | `robert_parker_tool.py` | Robert Parker Wine Advocate (Algolia API) | required (subscription) | `list[RobertParkerResult]` | ~1 s | World-class ratings, tasting notes, drink windows |
+| 5 | `suttonplace_tool.py` | Sutton Place Wine Merchant (Vancouver, Yaletown) | none | `list[SuttonPlaceResult]` | ~1 s | Stock + vintage + varietal + country + alcohol % + staff picks |
+| 6 | `marquis_tool.py` | Marquis Wine Cellars (Vancouver, curated) | none | `tuple[list[MarquisResult], int]` | ~1 s | Curated picks, MSRP, hierarchical categories |
+| 7 | `legacy_tool.py` | Legacy Liquor Store (Vancouver, premium) | none | `tuple[list[LegacyResult], int]` | ~1 s | Premium selection, staff picks, price filters, stock qty |
+| 8 | `tavily_tool.py` | Tavily web search API | required (paid) | `tuple[list[TavilyResult], str \| None]` | ~2 s | Pairings (niche cuisines), education, regions |
+| 9 | `gismondi_tool.py` | Anthony Gismondi reviews via local SQLite (FTS5) | none | `list[GismondiResult]` | < 100 ms | Canadian wine authority, deep tasting notes |
+| 10 | `robert_parker_tool.py` | Robert Parker Wine Advocate (Algolia API) | required (subscription) | `list[RobertParkerResult]` | ~1 s | World-class ratings, tasting notes, drink windows |
 
 ### Per-Tool Detail
 
@@ -278,7 +279,23 @@ async def search_okanagan_cellars(query: str) -> list[OkanaganCellarsResult]
 
 ---
 
-#### 3.5 `search_marquis` — Marquis Wine Cellars (Vancouver, curated)
+#### 3.5 `search_suttonplace` — Sutton Place Wine Merchant (Vancouver, Yaletown)
+
+```python
+async def search_suttonplace(query: str) -> list[SuttonPlaceResult]
+```
+
+**Unique value:** Same Barnet Network platform as Okanagan Cellars but with **richer fields**: vintage, varietal, country, alcohol %, staff picks, featured flags. The only store tool that returns vintage and alcohol data directly from the API.
+
+**When the orchestrator should call it:**
+- Fan-out alongside other store tools for any inventory/pricing query.
+- User specifically asks about the Yaletown wine shop or Hamilton Street.
+
+**Notes:** Apostrophes in queries return 0 results (Barnet backend quirk) — `search_with_fallback` strips them via `clean_query`. AND-matches all tokens like Okanagan Cellars, so the same `query_fallback` retries apply.
+
+---
+
+#### 3.6 `search_marquis` — Marquis Wine Cellars (Vancouver, curated)
 
 ```python
 async def search_marquis(
@@ -299,7 +316,7 @@ async def search_marquis(
 
 ---
 
-#### 3.6 `search_legacy` — Legacy Liquor Store (Vancouver, premium)
+#### 3.7 `search_legacy` — Legacy Liquor Store (Vancouver, premium)
 
 ```python
 async def search_legacy(
@@ -327,7 +344,7 @@ async def search_legacy(
 
 ---
 
-#### 3.7 `search_tavily` — Web Search Fallback
+#### 3.8 `search_tavily` — Web Search Fallback
 
 ```python
 async def search_tavily(
@@ -349,7 +366,7 @@ async def search_tavily(
 
 ---
 
-#### 3.8 `search_gismondi` — Gismondi Reviews (SQLite + FTS5)
+#### 3.9 `search_gismondi` — Gismondi Reviews (SQLite + FTS5)
 
 ```python
 async def search_gismondi(
@@ -403,7 +420,7 @@ class GismondiResult(BaseModel):
 
 ---
 
-#### 3.9 `search_robert_parker` — Robert Parker Wine Advocate
+#### 3.10 `search_robert_parker` — Robert Parker Wine Advocate
 
 ```python
 async def search_robert_parker(
@@ -546,12 +563,13 @@ graph = builder.compile(checkpointer=checkpointer)
 Tools are decorated with `@tool` (from `langchain_core.tools`). Each tool's docstring is what the orchestrator sees as the tool description — these docstrings must mirror the "When the orchestrator should call it" guidance in §3. The graph is a **custom `StateGraph`** (`build_graph()` in `agent.py`), not `create_react_agent`: the orchestrator node binds `TOOLS` itself and a custom `ToolNode(TOOLS)` executes them.
 
 ```python
-# agent.py — twelve tools registered
+# agent.py — thirteen tools registered
 TOOLS = [
     search_bcliquor_tool,
     search_winealign_tool,
     search_everything_wine_tool,
     search_okanagan_cellars_tool,
+    search_suttonplace_tool,
     search_marquis_tool,
     search_legacy_liquor_store_tool,
     search_gismondi_tool,
@@ -717,7 +735,7 @@ A leading **Response Language** directive precedes both tiers: respond in the us
 
 | ID | Rule |
 |---|---|
-| **G1** | **Parallelize.** Inventory/pricing queries → fan out store tools (bcliquor + marquis + okanagan + everythingwine + legacy) in one round. Critic queries → fan out critic tools. Serial calls cost the user latency. |
+| **G1** | **Parallelize.** Inventory/pricing queries → fan out store tools (bcliquor + marquis + okanagan + suttonplace + everythingwine + legacy) in one round. Critic queries → fan out critic tools. Serial calls cost the user latency. |
 | **G2** | **Attribute and link.** Critics by name + source; stores by name. Markdown link with the tool-returned URL whenever present — the orchestrator needs these for the where-to-buy listings (URLs survive into the compact projection so they aren't fabricated). |
 | **G3** | **Multi-turn state.** Resolve "the second one" / "the cheaper one" / "tell me more" against `last_recommendations` and `wine_context`. Don't re-recommend a wine the user already saw without acknowledging it. |
 | **G4** | **Calibrate depth to audience.** Beginner vocabulary → friendly, jargon-light. Sommelier vocabulary → full critic detail. |
@@ -791,13 +809,14 @@ Trigger: user asks about price, availability, or "where can I buy X".
 
 ```
 t=0   User: "Where can I buy CheckMate Chardonnay 2019 in BC?"
-t=0   orchestrator emits 5 tool_calls in one AIMessage:
+t=0   orchestrator emits 6 tool_calls in one AIMessage:
           ├── search_bcliquor("CheckMate Chardonnay 2019")
           ├── search_marquis("CheckMate Chardonnay 2019")
           ├── search_okanagan_cellars("CheckMate Chardonnay 2019")
+          ├── search_suttonplace("CheckMate Chardonnay 2019")
           ├── search_everything_wine("CheckMate Chardonnay 2019")
           └── search_legacy_liquor_store("CheckMate Chardonnay 2019")
-t=~1  All 5 ToolMessages return in parallel (~1–2s wall time)
+t=~1  All 6 ToolMessages return in parallel (~1–2s wall time)
 t=~1  orchestrator emits AIMessage with no tool_calls → that message is the answer → END
 ```
 
@@ -1813,6 +1832,7 @@ BC-wine-ai-agents/
 ├── ✅ winealign_tool.py
 ├── ✅ everythingwine_tool.py
 ├── ✅ okanagan_cellars_tool.py
+├── ✅ suttonplace_tool.py          # §3.5 — Sutton Place Wine Merchant (Barnet Network)
 ├── ✅ marquis_tool.py
 ├── ✅ legacy_tool.py              # §3.6 — Legacy Liquor Store (GraphQL)
 ├── ✅ tavily_tool.py

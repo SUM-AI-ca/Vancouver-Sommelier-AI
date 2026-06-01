@@ -37,6 +37,7 @@ const TOOL_LABELS = {
   search_winealign_tool: "WineAlign",
   search_everything_wine_tool: "Everything Wine",
   search_okanagan_cellars_tool: "Okanagan Cellars",
+  search_suttonplace_tool: "Sutton Place Wine Merchant",
   search_marquis_tool: "Marquis Wine Cellars",
   search_legacy_liquor_store_tool: "Legacy Liquor Store",
   search_tavily_tool: "Web Search",

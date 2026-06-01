@@ -4,7 +4,7 @@ BC 와인을 검색하고 추천해주는 AI 에이전트. LangGraph 기반으�
 
 **Live: [wineaiagent.com](https://wineaiagent.com)**
 
-현재 단계: **프로덕션 배포 완료.** Cloudflare Pages (프론트엔드) + Google Cloud Run (백엔드 API) 분리 호스팅. LangGraph ReAct 에이전트 12개 tool, FastAPI SSE 스트리밍, 멀티모달 vision 노드 (와인 라벨/와인리스트 사진 스캔), human-in-the-loop clarification, pre-agent query validation gate, golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중.
+현재 단계: **프로덕션 배포 완료.** Cloudflare Pages (프론트엔드) + Google Cloud Run (백엔드 API) 분리 호스팅. LangGraph ReAct 에이전트 13개 tool, FastAPI SSE 스트리밍, 멀티모달 vision 노드 (와인 라벨/와인리스트 사진 스캔), human-in-the-loop clarification, pre-agent query validation gate, golden-query + LLM-as-judge 품질 평가 파이프라인 가동 중.
 
 ---
 
@@ -39,6 +39,7 @@ LangGraph Agent (agent.py — Gemini 3.5 Flash, 12개 tool)
 │  winealign_tool.py ──── 전문가 리뷰 & 점수                │
 │  bcliquor_tool.py ───── 가격 & 재고 (공식 주류 판매)       │
 │  okanagan_cellars_tool.py ── 밴쿠버 와인샵 재고            │
+│  suttonplace_tool.py ──── 밴쿠버 Yaletown 와인샵 재고     │
 │  marquis_tool.py ────── 밴쿠버 큐레이션 와인샵             │
 │  legacy_tool.py ─────── 밴쿠버 프리미엄 와인샵             │
 │  everythingwine_tool.py ── 밴쿠버 와인샵 재고 + 매장별 수량 │
@@ -153,6 +154,7 @@ Cloudflare Pages 프로젝트 설정:
 | **Robert Parker** | `tools/robert_parker_tool.py` | Algolia REST API + auto-login | 필요 (구독) |
 | **BC Liquor Store** | `tools/bcliquor_tool.py` | JSON API (`/ajax/browse`) | - |
 | **Okanagan Cellars** | `tools/okanagan_cellars_tool.py` | JSON API (`/api/shop/.../products`) | - |
+| **Sutton Place Wine Merchant** | `tools/suttonplace_tool.py` | JSON API (`/api/shop/.../products`) | - |
 | **Everything Wine** | `tools/everythingwine_tool.py` | HTML scraping + In-Store Pickup REST API (매장별 재고) | - |
 | **Marquis Wine Cellars** | `tools/marquis_tool.py` | JSON API (BigCommerce Discovery) | - |
 | **Legacy Liquor Store** | `tools/legacy_tool.py` | GraphQL API (Apollo Server) | - |
@@ -199,7 +201,19 @@ results = await search_bcliquor("tantalus", max_pages=2, category="wine")
 results = await search_okanagan_cellars("checkmate")
 ```
 
-### 4. Marquis Wine Cellars (`tools/marquis_tool.py`)
+### 4. Sutton Place Wine Merchant (`tools/suttonplace_tool.py`)
+
+밴쿠버 Yaletown (1168 Hamilton St)의 와인샵. Okanagan Cellars와 동일한 Barnet Network 플랫폼. JSON API가 열려 있어서 바로 사용.
+
+- **API**: `GET /api/shop/124-229/products?q=...&show_on_web=true`
+- **데이터**: 이름, 카테고리, 가격, 세일 여부, 재고 수량, 용량, 국가, 품종, 빈티지, 알코올 도수, 스태프 픽, 피처드
+- **쿼리 폴백**: Okanagan Cellars와 동일한 Barnet 백엔드 — AND 매칭이라 [`tools/query_fallback.py`](tools/query_fallback.py)로 재시도. Apostrophe도 자동 제거 ("martin's lane" → "martins lane")
+
+```python
+results = await search_suttonplace("pinot noir")
+```
+
+### 5. Marquis Wine Cellars (`tools/marquis_tool.py`)
 
 밴쿠버의 큐레이션 와인 전문점. BigCommerce 기반이라 Discovery API가 public으로 열려 있다.
 
@@ -211,7 +225,7 @@ results = await search_okanagan_cellars("checkmate")
 results, total = await search_marquis("martins lane", limit=20)
 ```
 
-### 5. Legacy Liquor Store (`tools/legacy_tool.py`)
+### 6. Legacy Liquor Store (`tools/legacy_tool.py`)
 
 밴쿠버의 프리미엄 독립 와인샵. GraphQL API (Apollo Server on Google Cloud Run)가 열려 있어서 바로 사용.
 
@@ -224,7 +238,7 @@ results, total = await search_marquis("martins lane", limit=20)
 results, total = await search_legacy("pinot noir", limit=30, price_min=20, price_max=50, staff_pick=True)
 ```
 
-### 6. Everything Wine (`tools/everythingwine_tool.py`)
+### 7. Everything Wine (`tools/everythingwine_tool.py`)
 
 밴쿠버 와인샵 (Magento 2 + Elasticsuite). 검색 결과는 HTML scraping, **매장별 픽업 재고는 공개 REST API**로 보강한다.
 
@@ -238,7 +252,7 @@ results = await search_everything_wine("synchromesh")
 results = await search_everything_wine("synchromesh", with_store_stock=False)
 ```
 
-### 7. Gismondi on Wine (`tools/gismondi_tool.py` + `data/wines.db`)
+### 8. Gismondi on Wine (`tools/gismondi_tool.py` + `data/wines.db`)
 
 캐나다 와인 평론가 Anthony Gismondi의 리뷰 데이터. 원본 CSV는 별도 submodule (`gismondi-canada-wines/`)에서 관리되고, 거기 GitHub Actions이 자동 스크래핑한다. SQLite + FTS5로 풀텍스트 검색.
 
@@ -253,7 +267,7 @@ results = await search_everything_wine("synchromesh", with_store_stock=False)
 results = await search_gismondi("pinot noir", score_min=90, price_max=50, bc_only=True)
 ```
 
-### 8. Robert Parker (`tools/robert_parker_tool.py`)
+### 9. Robert Parker (`tools/robert_parker_tool.py`)
 
 세계에서 가장 영향력 있는 와인 평가 시스템. Robert Parker Wine Advocate의 100점 만점 평점, 전문 테이스팅 노트, 음용 기간(drink window) 등을 Algolia 기반 REST API로 검색한다.
 
@@ -265,7 +279,7 @@ results = await search_gismondi("pinot noir", score_min=90, price_max=50, bc_onl
 results = await search_robert_parker("pinot noir", country="Canada", region="British Columbia", rating_min=90, hits_per_page=5)
 ```
 
-### 9. Tavily 웹 검색 (`tools/tavily_tool.py`)
+### 10. Tavily 웹 검색 (`tools/tavily_tool.py`)
 
 기존 와인 매장/리뷰 툴로 답이 안 나오는 질문 처리용 폴백. Tavily API를 그대로 호출하고, `include_answer=True`로 AI 요약까지 같이 받는다. SDK 안 깔고 REST API 직접 호출.
 
@@ -283,7 +297,7 @@ results, answer = await search_tavily("best food pairings for BC Pinot Noir")
 
 ```
 BC-wine-ai-agents/
-├── agent.py                    # LangGraph 그래프 빌더 (entry_router + vision + ReAct 12 tools)
+├── agent.py                    # LangGraph 그래프 빌더 (entry_router + vision + ReAct 13 tools)
 ├── app.py                      # FastAPI 백엔드 (SSE 스트리밍, CORS, 멀티모달 입력, validation 게이트)
 ├── validation.py               # Pre-agent query 검증 (off-topic 쿼리 그래프 우회)
 ├── vision.py                   # 멀티모달 라벨/와인리스트 추출 (VisionExtraction 스키마)
@@ -299,6 +313,7 @@ BC-wine-ai-agents/
 │   ├── winealign_tool.py       # WineAlign 검색
 │   ├── bcliquor_tool.py        # BC Liquor Store 검색
 │   ├── okanagan_cellars_tool.py # Okanagan Cellars 검색
+│   ├── suttonplace_tool.py    # Sutton Place Wine Merchant 검색 (Barnet Network)
 │   ├── marquis_tool.py         # Marquis Wine Cellars 검색
 │   ├── legacy_tool.py          # Legacy Liquor Store 검색 (GraphQL)
 │   ├── everythingwine_tool.py  # Everything Wine 검색
@@ -393,6 +408,7 @@ python scripts/build_db.py
 python -m tools.winealign_tool
 python -m tools.bcliquor_tool
 python -m tools.okanagan_cellars_tool
+python -m tools.suttonplace_tool
 python -m tools.marquis_tool
 python -m tools.legacy_tool
 python -m tools.everythingwine_tool
@@ -435,7 +451,7 @@ gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agen
 
 ## Tech Stack
 
-- **LangGraph** — ReAct 에이전트 오케스트레이션 (12개 tool, 병렬 실행)
+- **LangGraph** — ReAct 에이전트 오케스트레이션 (13개 tool, 병렬 실행)
 - **Gemini 3.5 Flash (langchain-google-genai)** — 모든 노드에서 사용하는 LLM (멀티모달 — vision 노드에서 라벨/와인리스트 이미지 분석)
 - **FastAPI** — SSE 스트리밍 백엔드
 - **HTML/CSS/JS** — 와인 컬러 채팅 UI (vanilla, 빌드 스텝 없음)
