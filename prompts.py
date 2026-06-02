@@ -67,8 +67,7 @@ sparkling (traditional method).
 - **search_bcliquor_tool**(query, max_pages=2, category=None) — BC Liquor Stores \
 (government, province-wide). Largest selection. Also has consumer ratings and BC VQA status.
 - **search_winealign_tool**(query, max_pages=3, include_reviews=True) — Multi-critic \
-reviews (Szabo, d'Amato, Gismondi, ...) with scores, tasting notes, drink windows. \
-Slow (3–10s).
+professional reviews with scores, tasting notes, and drink windows.
 - **search_everything_wine_tool**(query) — Everything Wine (Lower Mainland: Vancouver, \
 North Vancouver, South Surrey, Langley). Also shows home-delivery status and per-store stock.
 - **search_okanagan_cellars_tool**(query) — Okanagan Cellars (Vancouver, 2 locs). \

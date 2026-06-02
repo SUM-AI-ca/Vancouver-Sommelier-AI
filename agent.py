@@ -48,8 +48,7 @@ async def search_bcliquor_tool(query: str, max_pages: int = 2, category: str | N
 @tool
 async def search_winealign_tool(query: str, max_pages: int = 3, include_reviews: bool = True) -> str:
     """Search WineAlign for multi-critic professional reviews with scores, tasting notes, value ratings, and drink windows.
-    Use when the user asks "what do critics think", "is this worth buying", or wants aging guidance.
-    Slow (3-10s). Always attribute by critic name.
+    Multiple professional critics in one search.
     """
     results = await search_winealign(query, max_pages=max_pages, include_reviews=include_reviews)
     return json.dumps({"status": "ok", "tool": "search_winealign", "results": [r.model_dump() for r in results]})
