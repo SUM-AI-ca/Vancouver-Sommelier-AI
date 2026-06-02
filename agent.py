@@ -38,8 +38,8 @@ from vision import (
 
 @tool
 async def search_bcliquor_tool(query: str, max_pages: int = 2, category: str | None = None) -> str:
-    """Search BC Liquor Stores for prices, availability, consumer ratings, and BC VQA status.
-    Use when the user asks about price, availability, "where can I buy", consumer sentiment, or BC VQA wines.
+    """Search BC Liquor Stores (government retailer, province-wide) for wines, prices, and availability.
+    Largest selection. Also returns consumer ratings and BC VQA status.
     """
     results = await search_bcliquor(query, max_pages=max_pages, category=category)
     return json.dumps({"status": "ok", "tool": "search_bcliquor", "results": [r.model_dump() for r in results]})
@@ -57,10 +57,9 @@ async def search_winealign_tool(query: str, max_pages: int = 3, include_reviews:
 
 @tool
 async def search_everything_wine_tool(query: str) -> str:
-    """Search Everything Wine for delivery and per-store pickup availability.
-    Returns warehouse-delivery status plus exact per-store stock quantities for the
-    Lower Mainland stores (Vancouver, North Vancouver, South Surrey, Langley).
-    Use when the user wants home delivery, in-store pickup, or which specific store has a wine.
+    """Search Everything Wine for wines, prices, and availability across Lower Mainland stores
+    (Vancouver, North Vancouver, South Surrey, Langley).
+    Also shows home-delivery status and exact per-store stock quantities.
     """
     results = await search_everything_wine(query)
     return json.dumps({"status": "ok", "tool": "search_everything_wine", "results": [r.model_dump() for r in results]})
@@ -68,8 +67,8 @@ async def search_everything_wine_tool(query: str) -> str:
 
 @tool
 async def search_okanagan_cellars_tool(query: str) -> str:
-    """Search Okanagan Cellars (Vancouver, 2 locations) for exact stock quantities and unit sizes.
-    Use when the user wants precise bottle counts or non-standard sizes (750ml, 1.5L).
+    """Search Okanagan Cellars (Vancouver, 2 locations) for wines, prices, and availability.
+    Often has competitive pricing on BC wines. Also shows exact stock quantities and unit sizes.
     """
     results = await search_okanagan_cellars(query)
     return json.dumps({"status": "ok", "tool": "search_okanagan_cellars", "results": [r.model_dump() for r in results]})
@@ -77,8 +76,8 @@ async def search_okanagan_cellars_tool(query: str) -> str:
 
 @tool
 async def search_suttonplace_tool(query: str) -> str:
-    """Search Sutton Place Wine Merchant (Vancouver, Yaletown) for wines with stock, vintage, varietal, and staff picks.
-    Use when checking Yaletown wine shop availability or vintage-specific inventory.
+    """Search Sutton Place Wine Merchant (Vancouver, Yaletown) for wines, prices, and availability.
+    Also shows vintage, varietal, country, alcohol %, and staff picks.
     """
     results = await search_suttonplace(query)
     return json.dumps({"status": "ok", "tool": "search_suttonplace", "results": [r.model_dump() for r in results]})
@@ -86,8 +85,8 @@ async def search_suttonplace_tool(query: str) -> str:
 
 @tool
 async def search_marquis_tool(query: str, limit: int = 20, skip: int = 0) -> str:
-    """Search Marquis Wine Cellars (Vancouver, curated boutique shop) for wines with hierarchical categories and MSRP.
-    Use for curated/boutique selections or MSRP vs sale price comparison.
+    """Search Marquis Wine Cellars (Vancouver, curated boutique) for wines, prices, and availability.
+    Boutique selection with hierarchical categories and MSRP pricing.
     """
     results, total = await search_marquis(query, limit=limit, skip=skip)
     return json.dumps({"status": "ok", "tool": "search_marquis", "total": total, "results": [r.model_dump() for r in results]})
@@ -102,9 +101,8 @@ async def search_legacy_liquor_store_tool(
     on_sale: bool | None = None,
     staff_pick: bool | None = None,
 ) -> str:
-    """Search Legacy Liquor Store (Vancouver, premium selection) for wines with price filtering and staff picks.
-    Use for premium/curated selections, sale items, or staff-recommended wines.
-    Supports price_min/price_max for budget queries and staff_pick=True for expert recommendations.
+    """Search Legacy Liquor Store (Vancouver, premium selection) for wines, prices, and availability.
+    Supports price_min/price_max filtering, on_sale for deals, and staff_pick for expert recommendations.
     """
     results, total = await search_legacy_liquor_store(
         query, limit=limit, price_min=price_min, price_max=price_max,

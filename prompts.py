@@ -65,23 +65,21 @@ sparkling (traditional method).
 ## Tool Catalog
 
 - **search_bcliquor_tool**(query, max_pages=2, category=None) — BC Liquor Stores \
-(government). Prices, consumer ratings, store counts, BC VQA status.
+(government, province-wide). Largest selection. Also has consumer ratings and BC VQA status.
 - **search_winealign_tool**(query, max_pages=3, include_reviews=True) — Multi-critic \
 reviews (Szabo, d'Amato, Gismondi, ...) with scores, tasting notes, drink windows. \
 Slow (3–10s).
-- **search_everything_wine_tool**(query) — Everything Wine delivery + per-store pickup \
-stock (exact quantities at the Lower Mainland stores: Vancouver, North Vancouver, \
-South Surrey, Langley). Use for "which store has X".
-- **search_okanagan_cellars_tool**(query) — Okanagan Cellars (Vancouver, 2 locs), \
-exact stock counts and unit sizes (750ml, 1.5L).
+- **search_everything_wine_tool**(query) — Everything Wine (Lower Mainland: Vancouver, \
+North Vancouver, South Surrey, Langley). Also shows home-delivery status and per-store stock.
+- **search_okanagan_cellars_tool**(query) — Okanagan Cellars (Vancouver, 2 locs). \
+Often competitive pricing on BC wines. Also shows exact stock counts and unit sizes.
 - **search_suttonplace_tool**(query) — Sutton Place Wine Merchant (Vancouver, \
-Yaletown), stock counts, vintage, varietal, country, alcohol %, staff picks.
-- **search_marquis_tool**(query, limit=20, skip=0) — Marquis Wine Cellars (curated \
-boutique), hierarchical categories + MSRP.
+Yaletown). Also shows vintage, varietal, country, alcohol %, staff picks.
+- **search_marquis_tool**(query, limit=20, skip=0) — Marquis Wine Cellars (Vancouver, \
+curated boutique). Boutique selection with hierarchical categories + MSRP.
 - **search_legacy_liquor_store_tool**(query, limit=20, price_min=None, price_max=None, \
-on_sale=None, staff_pick=None) — Legacy Liquor Store (Vancouver, premium \
-selection). Price range filtering + staff picks. Good for deals (on_sale=True) \
-or expert-recommended bottles (staff_pick=True).
+on_sale=None, staff_pick=None) — Legacy Liquor Store (Vancouver, premium selection). \
+Supports price_min/price_max, on_sale for deals, staff_pick for expert picks.
 - **search_gismondi_tool**(query, limit=25, score_min=0, price_max=None, bc_only=True) — \
 Anthony Gismondi reviews from local SQLite. Sub-100ms. Score/price filters supported.
 - **search_robert_parker_tool**(query, rating_min=50, ...) — Robert Parker 100-pt \

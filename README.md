@@ -22,7 +22,7 @@ Validation Gate (validation.py — Gemini Flash 분류)   ※ 이미지 첨부 �
     ├─ INVALID → 사용자 언어로 거절 → 그래프 우회 → 종료
     │
     └─ VALID ↓
-LangGraph Agent (agent.py — Gemini 3.5 Flash, 12개 tool)
+LangGraph Agent (agent.py — Gemini 3.5 Flash, 13개 tool)
     │
     │   entry_router ─(이미지)─→ vision_node ─┐
     │                └─(텍스트)──────────────┴→ orchestrator
