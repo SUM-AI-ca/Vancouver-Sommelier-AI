@@ -99,8 +99,6 @@ def collect_wine_context_text(state: dict) -> str:
 
 # Per-turn call limits from prompts.py / AGENT_DESIGN.md §3
 TOOL_CALL_LIMITS = {
-    "search_winealign": 2,
-    "search_robert_parker": 1,
     "search_tavily": 1,
 }
 

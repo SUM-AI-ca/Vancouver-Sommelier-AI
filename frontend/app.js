@@ -34,7 +34,6 @@ async function getTurnstileToken() {
 
 const TOOL_LABELS = {
   search_bcliquor_tool: "BC Liquor Store",
-  search_winealign_tool: "WineAlign",
   search_everything_wine_tool: "Everything Wine",
   search_okanagan_cellars_tool: "Okanagan Cellars",
   search_suttonplace_tool: "Sutton Place Wine Merchant",
@@ -42,7 +41,6 @@ const TOOL_LABELS = {
   search_legacy_liquor_store_tool: "Legacy Liquor Store",
   search_tavily_tool: "Web Search",
   search_gismondi_tool: "Gismondi On Wine",
-  search_robert_parker_tool: "Robert Parker",
   reasoning_pair_wine_tool: "Wine Pairing",
   update_preferences_tool: "Preferences",
   ask_user_clarification_tool: "Clarification",

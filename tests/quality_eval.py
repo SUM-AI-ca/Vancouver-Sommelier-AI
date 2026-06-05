@@ -188,8 +188,6 @@ async def evaluate_turn(
     min_stores = int(turn_expected.get("min_distinct_stores_cited", 0) or 0)
     min_critics = int(turn_expected.get("min_distinct_critics_cited", 0) or 0)
     require_link = bool(turn_expected.get("require_markdown_link", False))
-    max_lat = float(turn_expected.get("max_latency_s", 12.0))
-
     pass_summary = {
         "agent_completed": True,
         "orchestration": orch["pass"],
@@ -198,7 +196,6 @@ async def evaluate_turn(
         "coverage_stores": stores_n >= min_stores,
         "coverage_critics": critics_n >= min_critics,
         "link_inclusion": (n_links >= 1) if require_link else True,
-        "latency": latency_s <= max_lat,
         "structure_min": contract["score_of_4"] >= 1,
     }
     if ref_resolution is not None:
@@ -318,7 +315,7 @@ def aggregate(results: list[dict]) -> dict:
     n_turns = len(turns)
     completed = [t for t in turns if not t.get("error")]
 
-    judge_scores = {k: [] for k in ("accuracy", "citation", "completeness", "style", "helpfulness", "structure", "overall")}
+    judge_scores = {k: [] for k in ("relevance", "correctness", "helpfulness", "coherence", "harmlessness", "overall")}
     for t in completed:
         j = t.get("judge") or {}
         for k in judge_scores:
@@ -429,21 +426,22 @@ def aggregate(results: list[dict]) -> dict:
         )
     if limit_violations:
         top_issues.append(
-            f"**Per-turn 호출 한도 초과 {limit_violations}건** — winealign(≤2) / robert_parker(≤1) / tavily(≤1) 중 초과. `prompts.py` 의 한도 문구를 더 강하게 표현 필요."
+            f"**Per-turn 호출 한도 초과 {limit_violations}건** — tavily(≤1) 초과. `prompts.py` 의 한도 문구를 더 강하게 표현 필요."
         )
-    if latency_stats["p95"] and latency_stats["p95"] > 12:
+    judge_relevance = judge_avg.get("relevance")
+    if judge_relevance is not None and judge_relevance < 3.5:
         top_issues.append(
-            f"**Latency p95 = {latency_stats['p95']}s** (target ≤ 8s). 직렬 ReAct iteration 다수일 가능성 — `prompts.py` Rule 1 (parallelize) 강화."
+            f"**Judge 'relevance' 평균 {judge_relevance}/5** — 응답이 질문과 관련 없는 내용을 포함하거나 핵심을 벗어남. orchestrator 프롬프트에서 질문 재확인 단계 강화 필요."
         )
-    judge_struct = judge_avg.get("structure")
-    if judge_struct is not None and judge_struct < 3.0:
+    judge_correctness = judge_avg.get("correctness")
+    if judge_correctness is not None and judge_correctness < 3.5:
         top_issues.append(
-            f"**Judge 'structure' 평균 {judge_struct}/5** — 마크다운 skeleton 준수 LLM 평가도 낮음. 결정적 contract 점수와 일치 → format_response 활성화 또는 orchestrator 프롬프트에 skeleton 명시 강화."
+            f"**Judge 'correctness' 평균 {judge_correctness}/5** — 사실 정확도가 낮음. `prompts.py` Behavioral Rule 2 ('Never invent') 강화 또는 tool 결과 외 주장 금지 규칙 추가 필요."
         )
-    judge_cite = judge_avg.get("citation")
-    if judge_cite is not None and judge_cite < 3.5:
+    judge_coherence = judge_avg.get("coherence")
+    if judge_coherence is not None and judge_coherence < 3.5:
         top_issues.append(
-            f"**Judge 'citation' 평균 {judge_cite}/5** — 비평가/매장 출처 명시가 약함. Rule 3, 4 강화 또는 synthesis 단계에서 출처 토큰 누락 시 재생성 trigger 필요."
+            f"**Judge 'coherence' 평균 {judge_coherence}/5** — 응답 내 논리적 일관성 부족. 응답 구조화 또는 synthesis 단계 개선 필요."
         )
 
     return {
@@ -519,12 +517,11 @@ def render_summary_md(meta: dict, agg: dict, results: list[dict]) -> str:
     add(f"| Hallucination rate (responses) | {agg['hallucination']['rate']} |")
     add(f"| Total unsupported tokens | {agg['hallucination']['total_unsupported_tokens']} |")
     j = agg["judge_avg"]
-    add(f"| Judge — accuracy | {j['accuracy']} |")
-    add(f"| Judge — citation | {j['citation']} |")
-    add(f"| Judge — completeness | {j['completeness']} |")
-    add(f"| Judge — style | {j['style']} |")
+    add(f"| Judge — relevance | {j['relevance']} |")
+    add(f"| Judge — correctness | {j['correctness']} |")
     add(f"| Judge — helpfulness | {j['helpfulness']} |")
-    add(f"| Judge — structure | {j['structure']} |")
+    add(f"| Judge — coherence | {j['coherence']} |")
+    add(f"| Judge — harmlessness | {j['harmlessness']} |")
     add(f"| Judge — overall | {j['overall']} |")
     lat = agg["latency"]
     add(f"| Latency avg | {lat['avg']}s |")
@@ -617,13 +614,13 @@ def _suggest_code_targets(agg: dict) -> list[str]:
         targets.append("`prompts.py` Tool Catalog — tighten 'when to call' triggers. Several forbidden tool calls observed.")
     if agg["orchestration"]["limit_violations_count"]:
         targets.append("`prompts.py` — per-turn call limits exceeded. Re-emphasize the '≤N per turn' constraints; consider adding a guard in `agent.py` to drop excess calls.")
-    if agg["latency"]["p95"] and agg["latency"]["p95"] > 12:
-        targets.append("`prompts.py` Behavioral Rule 1 (parallelize) — strengthen with a concrete example showing all 4 store tools called in one tool_calls list.")
     judge = agg["judge_avg"]
-    if judge.get("citation") is not None and judge["citation"] < 3.5:
-        targets.append("`prompts.py` Rules 3 & 4 — strengthen attribution requirements (critic names, store names).")
-    if judge.get("completeness") is not None and judge["completeness"] < 3.5:
+    if judge.get("correctness") is not None and judge["correctness"] < 3.5:
+        targets.append("`prompts.py` Behavioral Rule 2 — strengthen 'Never invent' and require all claims to be grounded in tool results.")
+    if judge.get("relevance") is not None and judge["relevance"] < 3.5:
         targets.append("`prompts.py` orchestrator system prompt — add instruction to re-read the user query and confirm all parts addressed before emitting final response.")
+    if judge.get("coherence") is not None and judge["coherence"] < 3.5:
+        targets.append("`prompts.py` — response coherence is low. Consider activating synthesis step or adding explicit structuring instructions.")
     return targets
 
 
@@ -731,7 +728,7 @@ def _preflight_check() -> list[str]:
     if not env_path.exists():
         warnings.append(
             f".env file not found at {env_path}. "
-            "Auth-gated tools (WineAlign, Robert Parker, Tavily) will return 'unavailable'."
+            "Auth-gated tools (Tavily) will return 'unavailable'."
         )
 
     # Vertex AI / Gemini ADC
@@ -749,9 +746,7 @@ def _preflight_check() -> list[str]:
 
     # Per-tool env keys (warn-only)
     optional_keys = {
-        "WINEALIGN_EMAIL": "WineAlign critic reviews",
         "TAVILY_API_KEY": "Tavily web fallback",
-        "ROBERT_PARKER_EMAIL": "Robert Parker reviews",
     }
     missing = [(k, v) for k, v in optional_keys.items() if not os.environ.get(k)]
     if missing:
@@ -902,7 +897,7 @@ async def amain(args) -> int:
         "ended_at": ended_at.isoformat(),
         "duration_s": duration,
         "model": os.environ.get("BC_WINE_MODEL", "gemini-3.5-flash"),
-        "judge_model": "gemini-3.5-flash (temp=0)",
+        "judge_model": "gemini-3.1-pro-preview (temp=0)",
         "n_selected": len(selected),
         "n_completed": len(results),
         "n_total_in_suite": len(GOLDEN_QUERIES),

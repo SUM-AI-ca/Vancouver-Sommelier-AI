@@ -21,9 +21,7 @@ from tools.legacy_tool import search_legacy as search_legacy_liquor_store
 from tools.marquis_tool import search_marquis
 from tools.okanagan_cellars_tool import search_okanagan_cellars
 from tools.suttonplace_tool import search_suttonplace
-from tools.robert_parker_tool import search_robert_parker
 from tools.tavily_tool import search_tavily
-from tools.winealign_tool import search_winealign
 from vision import (
     extract_image_urls,
     extract_text,
@@ -43,15 +41,6 @@ async def search_bcliquor_tool(query: str, max_pages: int = 2, category: str | N
     """
     results = await search_bcliquor(query, max_pages=max_pages, category=category)
     return json.dumps({"status": "ok", "tool": "search_bcliquor", "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_winealign_tool(query: str, max_pages: int = 3, include_reviews: bool = True) -> str:
-    """Search WineAlign for multi-critic professional reviews with scores, tasting notes, value ratings, and drink windows.
-    Multiple professional critics in one search.
-    """
-    results = await search_winealign(query, max_pages=max_pages, include_reviews=include_reviews)
-    return json.dumps({"status": "ok", "tool": "search_winealign", "results": [r.model_dump() for r in results]})
 
 
 @tool
@@ -124,27 +113,6 @@ async def search_gismondi_tool(
     """
     results = await search_gismondi(query, limit=limit, score_min=score_min, price_max=price_max, bc_only=bc_only)
     return json.dumps({"status": "ok", "tool": "search_gismondi", "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_robert_parker_tool(
-    query: str,
-    rating_min: int = 50,
-    hits_per_page: int = 10,
-    country: str | None = None,
-    region: str | None = None,
-    color: str | None = None,
-    variety: str | None = None,
-) -> str:
-    """Search Robert Parker Wine Advocate for world-class 100-point ratings, tasting notes, and drink windows.
-    Use when the user asks for Robert Parker/RP scores, internationally recognized ratings, or global comparisons.
-    Authenticated.
-    """
-    results = await search_robert_parker(
-        query, rating_min=rating_min, hits_per_page=hits_per_page,
-        country=country, region=region, color=color, variety=variety,
-    )
-    return json.dumps({"status": "ok", "tool": "search_robert_parker", "results": [r.model_dump() for r in results]})
 
 
 @tool
@@ -246,14 +214,12 @@ async def update_preferences_tool(
 
 TOOLS = [
     search_bcliquor_tool,
-    search_winealign_tool,
     search_everything_wine_tool,
     search_okanagan_cellars_tool,
     search_suttonplace_tool,
     search_marquis_tool,
     search_legacy_liquor_store_tool,
     search_gismondi_tool,
-    search_robert_parker_tool,
     search_tavily_tool,
     reasoning_pair_wine_tool,
     update_preferences_tool,

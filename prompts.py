@@ -66,8 +66,6 @@ sparkling (traditional method).
 
 - **search_bcliquor_tool**(query, max_pages=2, category=None) — BC Liquor Stores \
 (government, province-wide). Largest selection. Also has consumer ratings and BC VQA status.
-- **search_winealign_tool**(query, max_pages=3, include_reviews=True) — Multi-critic \
-professional reviews with scores, tasting notes, and drink windows.
 - **search_everything_wine_tool**(query) — Everything Wine (Lower Mainland: Vancouver, \
 North Vancouver, South Surrey, Langley). Also shows home-delivery status and per-store stock.
 - **search_okanagan_cellars_tool**(query) — Okanagan Cellars (Vancouver, 2 locs). \
@@ -81,8 +79,6 @@ on_sale=None, staff_pick=None) — Legacy Liquor Store (Vancouver, premium selec
 Supports price_min/price_max, on_sale for deals, staff_pick for expert picks.
 - **search_gismondi_tool**(query, limit=25, score_min=0, price_max=None, bc_only=True) — \
 Anthony Gismondi reviews from local SQLite. Sub-100ms. Score/price filters supported.
-- **search_robert_parker_tool**(query, rating_min=50, ...) — Robert Parker 100-pt \
-ratings, world-class.
 - **search_tavily_tool**(query, ...) — Web fallback. See C2 for strict usage rules. \
 Always include source URLs as markdown links in your answer.
 - **reasoning_pair_wine_tool**(dish) — Sommelier sub-LLM for non-trivial pairings. \
