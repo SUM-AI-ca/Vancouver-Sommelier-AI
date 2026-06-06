@@ -4,7 +4,7 @@ Extracted from agent.py so both the legacy single orchestrator (agent.py) and th
 multi-agent specialists (agents/) can import the same tools without a circular import.
 
 Grouped lists declare specialist ownership:
-  - SOURCING_TOOLS   — store search + Google Maps locator
+  - SOURCING_TOOLS   — store search
   - SOMMELIER_TOOLS  — pairing reasoning + Google Search grounding
   - SUPERVISOR_DIRECT_TOOLS — clarification + preferences (the Supervisor binds these)
   - ALL_TOOLS — the flat set the legacy orchestrator binds (kept working until P0-3 swap)
@@ -21,7 +21,6 @@ from models import get_llm
 from prompts import PAIRING_SYSTEM_PROMPT
 from tools.bcliquor_tool import search_bcliquor
 from tools.everythingwine_tool import search_everything_wine
-from tools.google_maps_tool import search_google_maps
 from tools.google_search_tool import search_web_grounded
 from tools.legacy_tool import search_legacy as search_legacy_liquor_store
 from tools.marquis_tool import search_marquis
@@ -117,17 +116,6 @@ async def search_legacy_liquor_store_tool(
         on_sale=on_sale, staff_pick=staff_pick,
     )
     return json.dumps({"status": "ok", "tool": "search_legacy_liquor_store", "total": total, "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_google_maps_tool(query: str) -> str:
-    """Find liquor / wine stores near a place in Vancouver — address, opening
-    hours, rating, and a Google Maps link. Use for "where can I buy near X", "store near
-    me", or store-hours questions. Example query: "BC Liquor Store near Yaletown, Vancouver"
-    or "wine shop near Kitsilano, Vancouver". Not for product prices — use the store tools.
-    """
-    results = await search_google_maps(query)
-    return json.dumps({"status": "ok", "tool": "search_google_maps", "results": [r.model_dump() for r in results]})
 
 
 # ── Knowledge / reasoning tools ──────────────────────────────────
@@ -237,7 +225,6 @@ SOURCING_TOOLS = [
     search_suttonplace_tool,
     search_marquis_tool,
     search_legacy_liquor_store_tool,
-    search_google_maps_tool,
 ]
 
 SOMMELIER_TOOLS = [

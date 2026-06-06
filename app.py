@@ -169,10 +169,6 @@ def _summarize_tool_output(output) -> list[dict]:
             subtitle_bits.append(str(r["producer"]))
         if r.get("region"):
             subtitle_bits.append(str(r["region"]))
-        if r.get("address"):  # Google Maps place
-            subtitle_bits.append(str(r["address"]))
-        if r.get("open_now") is True:
-            subtitle_bits.append("open now")
         if price is not None:
             # WineAlign scrapes the price already prefixed with "$", BC Liquor
             # returns a bare number. Normalize so we never end up with "$$".
@@ -188,7 +184,7 @@ def _summarize_tool_output(output) -> list[dict]:
             subtitle_bits.append(f"{score} pts")
         url = (
             r.get("product_url") or r.get("url") or r.get("wine_url")
-            or r.get("review_url") or r.get("maps_url")
+            or r.get("review_url")
         )
         rows.append({
             "title": str(title)[:160],
@@ -234,6 +230,60 @@ def _summarize_tool_output(output) -> list[dict]:
                 "url": None,
             })
     return rows
+
+
+AGENT_TOOLS = {"sourcing_agent_tool", "sommelier_agent_tool", "menu_architect_tool"}
+
+INNER_TOOL_LABELS = {
+    "search_bcliquor": "BC Liquor Store",
+    "search_everything_wine": "Everything Wine",
+    "search_okanagan_cellars": "Okanagan Cellars",
+    "search_suttonplace": "Sutton Place Wine Merchant",
+    "search_marquis": "Marquis Wine Cellars",
+    "search_legacy_liquor_store": "Legacy Liquor Store",
+    "search_web_grounded": "Web Search",
+    "reasoning_pair_wine": "Wine Pairing",
+    "sourcing_agent": "Sourcing Agent",
+}
+
+
+def _summarize_agent_output(output) -> dict:
+    """Summarize an agent tool's output including per-inner-tool breakdowns.
+
+    Returns {"summary": [...], "count": N, "inner_tools": [...]}.
+    """
+    if hasattr(output, "content"):
+        output = output.content
+    if not isinstance(output, str):
+        return {"summary": [], "count": 0, "inner_tools": []}
+    try:
+        data = json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        return {"summary": [], "count": 0, "inner_tools": []}
+    if not isinstance(data, dict):
+        return {"summary": [], "count": 0, "inner_tools": []}
+
+    inner_tools_raw = data.get("inner_tools") if isinstance(data.get("inner_tools"), list) else []
+    inner_tools = []
+    for it in inner_tools_raw:
+        if not isinstance(it, dict):
+            continue
+        tool_name = it.get("tool", "")
+        content = it.get("content", "")
+        rows = _summarize_tool_output(content)
+        inner_tools.append({
+            "tool": tool_name,
+            "label": INNER_TOOL_LABELS.get(tool_name, tool_name),
+            "summary": rows,
+            "count": len(rows),
+        })
+
+    summary = _summarize_tool_output(output)
+    return {
+        "summary": summary,
+        "count": len(summary),
+        "inner_tools": inner_tools,
+    }
 
 
 def _summarize_vision(extractions) -> list[dict]:
@@ -422,14 +472,26 @@ async def chat(req: ChatRequest, request: Request):
                     })
                 elif kind == "on_tool_end":
                     output = event.get("data", {}).get("output")
-                    summary = _summarize_tool_output(output)
-                    yield sse({
-                        "type": "tool_end",
-                        "tool": name,
-                        "run_id": event.get("run_id"),
-                        "summary": summary,
-                        "count": len(summary),
-                    })
+                    if name in AGENT_TOOLS:
+                        agent_result = _summarize_agent_output(output)
+                        yield sse({
+                            "type": "tool_end",
+                            "tool": name,
+                            "run_id": event.get("run_id"),
+                            "is_agent": True,
+                            "inner_tools": agent_result["inner_tools"],
+                            "summary": agent_result["summary"],
+                            "count": agent_result["count"],
+                        })
+                    else:
+                        summary = _summarize_tool_output(output)
+                        yield sse({
+                            "type": "tool_end",
+                            "tool": name,
+                            "run_id": event.get("run_id"),
+                            "summary": summary,
+                            "count": len(summary),
+                        })
                 elif kind == "on_chat_model_stream":
                     # Only the orchestrator's output is user-facing. Other LLM
                     # calls in the graph also stream tokens — the relevance filter

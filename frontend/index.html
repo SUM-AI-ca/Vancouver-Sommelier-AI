@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WINE AI</title>
+    <title>Vancouver Drinks AI</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,16 +14,17 @@
 
 <header class="site-header">
     <div class="container">
-        <span class="brand">BC Wine AI Agent</span>
+        <span class="brand">Vancouver Drinks AI</span>
     </div>
 </header>
 
 <main class="landing">
     <section class="hero container">
-        <h1 class="hero-title">Conversational research for BC wines.</h1>
+        <h1 class="hero-title">Your Vancouver drinks concierge.</h1>
         <p class="hero-subtitle">
-            Search live inventory across every major BC retailer, read professional
-            critic reviews, and get food pairing guidance &mdash; all in one conversation.
+            Search live inventory &mdash; wine, beer, spirits, cider &mdash; across every
+            major Vancouver retailer, read critic reviews, and get food pairing
+            guidance, all in one conversation.
         </p>
         <button class="btn-primary btn-large" id="open-chat">Start chatting</button>
         <div id="turnstile-container" style="display:flex;justify-content:center;margin-top:1rem"></div>
@@ -35,19 +36,19 @@
             <p>Search BC Liquor Stores, Everything Wine, Okanagan Cellars, Sutton Place Wine Merchant, Marquis Wine Cellars, and Legacy Liquor Store together. See current prices and stock side by side.</p>
         </article>
         <article class="cap">
-            <h3>Critic reviews</h3>
-            <p>Scores and reviews from <a href="https://gismondionwine.com" target="_blank" rel="noopener noreferrer">Gismondi on Wine</a>, attributed to the reviewer that wrote them.</p>
+            <h3>Expert knowledge</h3>
+            <p>Sommelier-level knowledge backed by Google Search grounding &mdash; scores, reviews, producer details, and region info with cited sources.</p>
         </article>
         <article class="cap">
             <h3>Food pairings</h3>
-            <p>Sommelier-style reasoning for any cuisine, with recommendations drawn from the British Columbia wine catalogue.</p>
+            <p>Sommelier-style reasoning for any cuisine &mdash; wine, beer, spirits, cocktails &mdash; with recommendations you can buy locally.</p>
         </article>
     </section>
 </main>
 
 <footer class="site-footer">
     <div class="container">
-        <p>Critic data sourced from <a href="https://gismondionwine.com" target="_blank" rel="noopener noreferrer">Gismondi on Wine</a></p>
+        <p>Powered by multi-agent AI with real-time Vancouver retail data</p>
     </div>
 </footer>
 
@@ -66,7 +67,7 @@
         <div class="chat-messages-wrap">
             <div class="chat-messages" id="chat-messages">
                 <div class="chat-message ai">
-                    Ask about BC wines: prices, availability, critic reviews, food pairings, or anything else.
+                    Ask about drinks in Vancouver: wine, beer, spirits, cider — prices, availability, food pairings, or anything else.
                 </div>
             </div>
         </div>
@@ -74,7 +75,7 @@
         <div class="chat-input-area">
             <div class="chat-attachments" id="chat-attachments" hidden></div>
             <div class="chat-input-row">
-                <button class="chat-attach" id="chat-attach" aria-label="Attach a wine label or wine list photo" title="Attach a wine label or wine list photo">
+                <button class="chat-attach" id="chat-attach" aria-label="Attach a label or menu photo" title="Attach a label or menu photo">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 </button>
                 <input type="file" id="chat-file" accept="image/*" multiple hidden>
@@ -88,7 +89,9 @@
     </div>
 </div>
 
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=initTurnstile" async defer></script>
+<!-- Turnstile api.js is injected by app.js (loadTurnstile) only in production,
+     after window.initTurnstile is defined — avoids the async onload race and
+     skips the widget entirely on localhost. -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="app.js"></script>
 </body>

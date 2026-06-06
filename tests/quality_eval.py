@@ -744,15 +744,6 @@ def _preflight_check() -> list[str]:
     except ImportError:
         warnings.append("google-auth not installed — cannot pre-check Vertex AI credentials.")
 
-    # Per-tool env keys (warn-only)
-    optional_keys = {
-        "GOOGLE_MAPS_API_KEY": "Google Maps store locator",
-    }
-    missing = [(k, v) for k, v in optional_keys.items() if not os.environ.get(k)]
-    if missing:
-        for k, label in missing:
-            warnings.append(f"{k} not set — {label} will be unavailable.")
-
     return warnings
 
 

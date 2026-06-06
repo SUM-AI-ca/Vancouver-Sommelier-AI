@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -75,15 +75,31 @@ async def run_subagent(graph, request: str) -> str:
     return _flatten_text(final_state["messages"][-1].content).strip()
 
 
+def _extract_inner_tools(messages: list) -> list[dict]:
+    """Walk a sub-agent's message history and pull out each ToolMessage's raw output."""
+    tools: list[dict] = []
+    for m in messages:
+        if isinstance(m, ToolMessage) and m.content:
+            tools.append({"tool": m.name or "", "content": m.content})
+    return tools
+
+
 async def run_subagent_json(graph, request: str, tool_name: str) -> str:
     """run_subagent wrapped in the standard tool JSON envelope.
 
-    Returns `{"status": "ok", "tool": <tool_name>, "answer": <text>}` so app.py's
-    `_summarize_tool_output` renders the specialist's answer as a markdown body badge.
-    On failure, returns a status="error" envelope (the Supervisor keeps other results).
+    Returns `{"status": "ok", "tool": <tool_name>, "answer": <text>,
+    "inner_tools": [...]}` so app.py can render per-tool breakdowns in the
+    agent box UI. On failure, returns a status="error" envelope.
     """
     try:
-        answer = await run_subagent(graph, request)
-        return json.dumps({"status": "ok", "tool": tool_name, "answer": answer})
+        final_state = await graph.ainvoke({"messages": [HumanMessage(content=request)]})
+        answer = _flatten_text(final_state["messages"][-1].content).strip()
+        inner_tools = _extract_inner_tools(final_state["messages"])
+        return json.dumps({
+            "status": "ok",
+            "tool": tool_name,
+            "answer": answer,
+            "inner_tools": inner_tools,
+        })
     except Exception as e:  # noqa: BLE001 — a specialist failure must not crash the turn
         return json.dumps({"status": "error", "tool": tool_name, "message": f"{type(e).__name__}: {e}"})

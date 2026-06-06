@@ -3,10 +3,31 @@
 const API_BASE = "";
 
 const TURNSTILE_SITE_KEY = "0x4AAAAAACk40fbVxvRdolMx";
+// Turnstile site keys are domain-bound and won't issue a token on localhost, which
+// stalls the send. Skip the widget in local dev; production (real hostname) is unchanged.
+// The backend already bypasses verification when CF_TURNSTILE_SECRET is unset (local).
+const TURNSTILE_DISABLED = ["localhost", "127.0.0.1", "0.0.0.0", ""].includes(location.hostname);
 let turnstileToken = null;
 let turnstileWidgetId = null;
 
+// Inject the Cloudflare Turnstile script only in production, after window.initTurnstile
+// is defined. Loading it statically with ?onload=initTurnstile raced app.js (the async
+// script could fire its onload before initTurnstile existed -> "Unable to find onload
+// callback" error). On localhost we never load it, so the widget is fully skipped.
+function loadTurnstile() {
+  if (TURNSTILE_DISABLED) return;
+  if (document.querySelector("script[data-turnstile]")) return;
+  window.initTurnstile = initTurnstile;
+  const s = document.createElement("script");
+  s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=initTurnstile";
+  s.async = true;
+  s.defer = true;
+  s.setAttribute("data-turnstile", "");
+  document.head.appendChild(s);
+}
+
 function initTurnstile() {
+  if (TURNSTILE_DISABLED) return;
   if (typeof turnstile === "undefined" || document.getElementById("cf-turnstile")) return;
   const container = document.getElementById("turnstile-container");
   if (!container) return;
@@ -19,6 +40,7 @@ function initTurnstile() {
 }
 
 async function getTurnstileToken() {
+  if (TURNSTILE_DISABLED) return null;
   if (typeof turnstile === "undefined") return null;
   for (let i = 0; i < 20; i++) {
     if (turnstileToken) {
@@ -32,7 +54,16 @@ async function getTurnstileToken() {
   return null;
 }
 
+const AGENT_TOOL_NAMES = new Set([
+  "sourcing_agent_tool",
+  "sommelier_agent_tool",
+  "menu_architect_tool",
+]);
+
 const TOOL_LABELS = {
+  sourcing_agent_tool: "Sourcing Agent",
+  sommelier_agent_tool: "Sommelier",
+  menu_architect_tool: "Menu Architect",
   search_bcliquor_tool: "BC Liquor Store",
   search_everything_wine_tool: "Everything Wine",
   search_okanagan_cellars_tool: "Okanagan Cellars",
@@ -73,7 +104,7 @@ let threadId = null;
 let sending = false;
 let activeTools = 0;
 
-const INITIAL_GREETING = "Ask about BC wines: prices, availability, critic reviews, food pairings, or anything else.";
+const INITIAL_GREETING = "Ask about drinks in Vancouver: wine, beer, spirits, cider — prices, availability, food pairings, or anything else.";
 
 /* ── Overlay open/close ──────────────────────────── */
 
@@ -85,7 +116,7 @@ async function openChat() {
   setTimeout(() => inputEl.focus(), 0);
 }
 
-initTurnstile();
+loadTurnstile();
 
 function closeChat() {
   overlay.classList.remove("active");
@@ -215,12 +246,96 @@ function completeToolBadge(toolName, runId, summary, count) {
   }
 }
 
+function addAgentBox(toolName, runId) {
+  const label = TOOL_LABELS[toolName] || toolName;
+  const wrapper = document.createElement("div");
+  wrapper.className = "agent-box";
+  wrapper.dataset.tool = toolName;
+  if (runId) wrapper.dataset.runId = runId;
+  wrapper.innerHTML = `
+    <button type="button" class="agent-box-header" aria-expanded="false">
+      <span class="agent-box-indicator" aria-hidden="true"></span>
+      <span class="agent-box-label">${escapeHtml(label)}</span>
+      <span class="agent-box-status">working…</span>
+      <span class="agent-box-chevron" aria-hidden="true"></span>
+    </button>
+    <div class="agent-box-panel"></div>
+  `;
+  const headerBtn = wrapper.querySelector(".agent-box-header");
+  headerBtn.addEventListener("click", () => {
+    if (!wrapper.classList.contains("done")) return;
+    const expanded = wrapper.classList.toggle("open");
+    headerBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
+  });
+  messagesEl.appendChild(wrapper);
+  scrollToBottom();
+  return wrapper;
+}
+
+function completeAgentBox(toolName, runId, innerTools) {
+  let target = runId
+    ? messagesEl.querySelector(`.agent-box[data-run-id="${CSS.escape(runId)}"]`)
+    : null;
+  if (!target) {
+    target = messagesEl.querySelector(
+      `.agent-box[data-tool="${CSS.escape(toolName)}"]:not(.done)`
+    );
+  }
+  if (!target) return;
+
+  target.classList.add("done");
+
+  const tools = Array.isArray(innerTools) ? innerTools : [];
+  const totalResults = tools.reduce((s, t) => s + (t.count || 0), 0);
+  const sources = tools.filter((t) => t.count > 0).length;
+
+  const statusEl = target.querySelector(".agent-box-status");
+  if (statusEl) {
+    statusEl.textContent = totalResults
+      ? `${totalResults} result${totalResults > 1 ? "s" : ""} from ${sources} source${sources > 1 ? "s" : ""}`
+      : "completed";
+  }
+
+  const panel = target.querySelector(".agent-box-panel");
+  if (panel && tools.length > 0) {
+    panel.innerHTML = tools.map((t) => {
+      const tLabel = escapeHtml(t.label || TOOL_LABELS[t.tool] || t.tool || "Tool");
+      const tCount = t.count || 0;
+      const countText = tCount ? `${tCount} result${tCount > 1 ? "s" : ""}` : "no results";
+      const rows = Array.isArray(t.summary) && t.summary.length > 0
+        ? t.summary.map(renderToolRow).join("")
+        : `<div class="tool-row-empty">No results returned.</div>`;
+      return `
+        <div class="inner-tool-group">
+          <button type="button" class="inner-tool-header" aria-expanded="false">
+            <span class="inner-tool-dot"></span>
+            <span class="inner-tool-label">${tLabel}</span>
+            <span class="inner-tool-count">${escapeHtml(countText)}</span>
+            <span class="inner-tool-chevron"></span>
+          </button>
+          <div class="inner-tool-panel">${rows}</div>
+        </div>
+      `;
+    }).join("");
+
+    panel.querySelectorAll(".inner-tool-header").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const group = btn.closest(".inner-tool-group");
+        const expanded = group.classList.toggle("open");
+        btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+      });
+    });
+  } else if (panel) {
+    panel.innerHTML = `<div class="tool-row-empty">No details available.</div>`;
+  }
+}
+
 function markRemainingBadgesDone() {
-  messagesEl.querySelectorAll(".tool-badge:not(.done)").forEach((b) => {
+  messagesEl.querySelectorAll(".tool-badge:not(.done), .agent-box:not(.done)").forEach((b) => {
     b.classList.add("done");
-    const countEl = b.querySelector(".tool-badge-count");
+    const countEl = b.querySelector(".tool-badge-count") || b.querySelector(".agent-box-status");
     if (countEl) countEl.textContent = "completed";
-    const panel = b.querySelector(".tool-badge-panel");
+    const panel = b.querySelector(".tool-badge-panel") || b.querySelector(".agent-box-panel");
     if (panel && !panel.innerHTML) {
       panel.innerHTML = `<div class="tool-row-empty">No details available.</div>`;
     }
@@ -433,11 +548,8 @@ async function sendMessage() {
             break;
 
           case "tool_start": {
-            // ask_user_clarification_tool pauses on an interrupt — its tool_end
-            // doesn't fire until the user replies. Skip the badge so the
-            // dedicated clarification UI is the only signal.
-            if (event.tool === "ask_user_clarification_tool") break;
-            addToolBadge(event.tool, event.run_id);
+            if (!AGENT_TOOL_NAMES.has(event.tool)) break;
+            addAgentBox(event.tool, event.run_id);
             activeTools += 1;
             const label = TOOL_LABELS[event.tool] || event.tool;
             setStatus(`Running ${label}`, true);
@@ -445,8 +557,8 @@ async function sendMessage() {
           }
 
           case "tool_end":
-            if (event.tool === "ask_user_clarification_tool") break;
-            completeToolBadge(event.tool, event.run_id, event.summary, event.count);
+            if (!AGENT_TOOL_NAMES.has(event.tool)) break;
+            completeAgentBox(event.tool, event.run_id, event.inner_tools);
             activeTools = Math.max(0, activeTools - 1);
             if (activeTools === 0) setStatus("Processing", true);
             break;
@@ -539,11 +651,11 @@ function saveAsPdf() {
   const lines = [];
   messages.forEach((el) => {
     const isUser = el.classList.contains("user");
-    const role = isUser ? "You" : "BC Wine AI";
+    const role = isUser ? "You" : "Drinks AI";
     lines.push(`<div class="pdf-msg ${isUser ? "pdf-user" : "pdf-ai"}"><span class="pdf-role">${role}</span>${el.innerHTML}</div>`);
   });
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>BC Wine AI — Conversation</title>
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Vancouver Drinks AI — Conversation</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#2A1F22;padding:2rem;max-width:800px;margin:0 auto;line-height:1.6}
@@ -565,7 +677,7 @@ h1{font-size:1.3rem;font-weight:700;color:#7A3D4F;margin-bottom:0.25rem}
 .chat-msg-thumb{width:auto;height:auto;max-width:220px;max-height:220px;object-fit:contain;border-radius:6px;border:1px solid #ECDFE0}
 .pdf-msg img{max-width:100%;height:auto}
 </style></head><body>
-<h1>BC Wine AI Agent</h1>
+<h1>Vancouver Drinks AI</h1>
 <div class="pdf-date">${new Date().toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
 ${lines.join("\n")}
 </body></html>`;

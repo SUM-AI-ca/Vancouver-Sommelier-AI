@@ -2,7 +2,7 @@
 
 > 기준일: **2026-06-05**. 계획 전문은 [CHALLENGE_PLAN.md](./CHALLENGE_PLAN.md).
 > 마감: **2026-06-11 17:00 PT**. 트랙: **Track 1 (Build)**.
-> 상태 요약: **Day 1–3 완료**(빌드/임포트 레벨 검증), **Day 4–6 남음**. **아직 커밋/배포 안 함** (working tree only, branch `main`).
+> 상태 요약: **Day 1–4 거의 완료**(빌드/임포트 검증). Day 1–3 + Vancouver는 **`challenge-multi-agent-rebuild` 브랜치에 커밋(38ec06e)**. Day 4(golden 리매핑·ML/B2B/MAP 쿼리)는 working tree(미커밋). 남음: **로컬 테스트, Day 5(배포·산출물), Day 6(영상·제출)**. 미배포.
 
 ---
 
@@ -88,9 +88,9 @@ grounding + Google Maps 추가, B2B 메뉴 설계 + food_menu 비전, 다국어 
 
 ---
 
-## 환경/시크릿
-- `.env`(gitignored)에 **`GOOGLE_MAPS_API_KEY`** 저장됨(키는 채팅에 평문 노출됐으니 GCP에서 API 제한 권장)
-- **Places API (New)** GCP enable 필요(아직 미확인)
+## 환경/시크릿 (전부 `.env`, gitignored)
+- **`GOOGLE_MAPS_API_KEY`** 저장됨(키 평문 노출됐으니 GCP에서 API 제한 권장). **Places API (New)** enable 필요(미확인)
+- **LangSmith** 추적: `LANGSMITH_TRACING=true`, `LANGSMITH_PROJECT=wineaiagent`, `LANGSMITH_API_KEY`, `LANGSMITH_ENDPOINT` 설정됨 — `LANGCHAIN_*`도 동일 값으로 동기화(옛 `bc-wine-agent` 제거). 부팅 로그에 `project=wineaiagent` 확인됨
 - grounding은 **별도 키 불필요** — 기존 Vertex AI 자격증명 사용
 
 ## 현재 파일 상태 (이 작업 범위)
@@ -105,18 +105,16 @@ grounding + Google Maps 추가, B2B 메뉴 설계 + food_menu 비전, 다국어 
 
 ## ⏭️ 남은 작업 (Day 4–6)
 
-### Day 4 — 다국어 마무리 + golden_queries 갱신 + 로컬 테스트
-- **[중요] `tests/golden_queries.py` expected_tools 리매핑**: Supervisor가 store 툴을 직접 안 부르고
-  `sourcing_agent_tool`/`sommelier_agent_tool`/`menu_architect_tool`을 호출함. 내부 store 툴은 isolated라
-  eval tool_log에도 안 잡힘 → 현재 tool-orchestration 메트릭 전부 mismatch. expected_tools를 specialist 어휘로 바꿔야 함.
-  (hallucination/judge 메트릭은 정상 동작)
-- ZH/JA: 프롬프트/validation은 이미 반영됨. golden_queries에 ZH/JA 쿼리 추가
-- B2B(menu_architect)·Maps 골든 쿼리 추가
-- 로컬 테스트(아래 "이어서 하기" 참고)
+### Day 4 — 다국어 마무리 + golden_queries 갱신 + 로컬 테스트  (golden 리매핑 ✅ / 로컬 테스트 남음)
+- ✅ **`tests/golden_queries.py` 리매핑 완료**: `expected_tools`를 specialist 어휘(`sourcing_agent_tool`/`sommelier_agent_tool`/`menu_architect_tool` + `update_preferences_tool`)로 전부 교체. metrics.py는 `_strip_tool_suffix`로 정규화하고 `parallel_fan_out`은 pass 조건이 아니라 **로직 변경 불필요**. 검증: 29 queries / 35 invocations / 16 categories, 모든 tool명이 실제 supervisor 툴과 일치, eval 하네스 import OK.
+- ✅ **다국어 골든 쿼리 추가**: ML(中文 ML-ZH-001, 日本語 ML-JA-001), B2B 한국어(B2B-002). 프롬프트/validation의 ZH/JA는 Day 1에 이미 반영.
+- ✅ **신규 카테고리**: B2B(2, menu_architect), MAP(1, sourcing+Maps), ML(2).
+- ✅ OFF-003 injection canary 문자열 갱신(SUPERVISOR 프롬프트 기준: "AI Drinks Concierge"/"Routing guide"/"Hard rules").
+- ⏳ **남음**: 로컬 테스트(자격증명 필요, 아래 "이어서 하기"). eval은 사용자가 직접 실행: `python -m tests.quality_eval --skip-judge`.
 
 ### Day 5 — 배포 + 산출물
 - **Cloud Run 재배포**: `gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agent-jh-2026 --allow-unauthenticated`
-  → **`GOOGLE_MAPS_API_KEY`를 Cloud Run 환경변수로 추가** 필요(`--set-env-vars` 또는 콘솔)
+  → **Cloud Run 환경변수 추가** 필요(`--set-env-vars` 또는 콘솔): `GOOGLE_MAPS_API_KEY`, 그리고 LangSmith(`LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT=wineaiagent`, `LANGSMITH_ENDPOINT`) — 로컬 `.env`는 배포에 안 실리므로 별도 주입
 - eval 실행 + 안정화
 - **Architecture diagram**(Mermaid): Supervisor+3 specialist, GCP 인프라
 - Business case 문서(B2B/B2C 균형)

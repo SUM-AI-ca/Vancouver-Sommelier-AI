@@ -591,6 +591,187 @@ a.tool-row:hover {
     to { transform: rotate(360deg); }
 }
 
+/* ── Agent boxes ────────────────────────────────── */
+
+.agent-box {
+    display: flex;
+    flex-direction: column;
+    align-self: flex-start;
+    max-width: 92%;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--primary);
+    background: var(--background-secondary);
+    overflow: hidden;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.agent-box-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    width: 100%;
+    background: transparent;
+    border: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: default;
+}
+
+.agent-box.done .agent-box-header {
+    cursor: pointer;
+}
+
+.agent-box.done .agent-box-header:hover {
+    background: var(--primary-soft);
+}
+
+.agent-box-label {
+    flex: 0 0 auto;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.agent-box-status {
+    flex: 1 1 auto;
+    color: var(--text-tertiary);
+    font-size: 0.76rem;
+}
+
+.agent-box-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    background: var(--border-subtle);
+}
+
+.agent-box:not(.done) .agent-box-indicator {
+    border: 2px solid var(--border-color);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    background: transparent;
+    animation: spin 0.9s linear infinite;
+}
+
+.agent-box.done .agent-box-indicator {
+    background: var(--primary);
+}
+
+.agent-box-chevron {
+    flex: 0 0 auto;
+    width: 9px;
+    height: 9px;
+    border-right: 2px solid var(--text-tertiary);
+    border-bottom: 2px solid var(--text-tertiary);
+    transform: rotate(45deg);
+    margin-right: 2px;
+    visibility: hidden;
+    transition: transform 0.18s;
+}
+
+.agent-box.done .agent-box-chevron {
+    visibility: visible;
+}
+
+.agent-box.open .agent-box-chevron {
+    transform: rotate(-135deg);
+    margin-top: 4px;
+}
+
+.agent-box-panel {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px 10px;
+    background: var(--background);
+    border-top: 1px solid var(--border-color);
+}
+
+.agent-box.open .agent-box-panel {
+    display: flex;
+}
+
+/* Inner tool groups inside an agent box */
+
+.inner-tool-group {
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--background-secondary);
+    overflow: hidden;
+}
+
+.inner-tool-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 9px;
+    width: 100%;
+    background: transparent;
+    border: none;
+    font: inherit;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.inner-tool-header:hover {
+    background: var(--primary-soft);
+}
+
+.inner-tool-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+    background: var(--primary);
+}
+
+.inner-tool-label {
+    flex: 0 0 auto;
+    font-weight: 600;
+}
+
+.inner-tool-count {
+    flex: 1 1 auto;
+    color: var(--text-tertiary);
+    font-size: 0.72rem;
+}
+
+.inner-tool-chevron {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-right: 1.5px solid var(--text-tertiary);
+    border-bottom: 1.5px solid var(--text-tertiary);
+    transform: rotate(45deg);
+    margin-right: 2px;
+    transition: transform 0.18s;
+}
+
+.inner-tool-group.open .inner-tool-chevron {
+    transform: rotate(-135deg);
+    margin-top: 3px;
+}
+
+.inner-tool-panel {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px 8px;
+    background: var(--background);
+    border-top: 1px solid var(--border-color);
+}
+
+.inner-tool-group.open .inner-tool-panel {
+    display: flex;
+}
+
 /* ── Input ───────────────────────────────────────── */
 
 .chat-input-area {
