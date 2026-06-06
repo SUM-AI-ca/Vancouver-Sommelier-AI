@@ -29,7 +29,6 @@ class GismondiResult(BaseModel):
     score_100: int
     score_20: str
     region: str
-    tasting_notes: str
     tasting_date: str
     taster: str
     price: float | None = None
@@ -77,7 +76,7 @@ def _search_sync(
     sql = """
     SELECT
         w.note_id, w.title, w.score_100, w.score_20, w.region,
-        w.tasting_notes, w.tasting_date, w.taster, w.price,
+        w.tasting_date, w.taster, w.price,
         w.price_format, w.price_channel, w.producer,
         w.distributor, w.grape, w.cspc, w.upc, w.url
     FROM wines w
@@ -107,7 +106,7 @@ def _search_sync(
     results: list[GismondiResult] = []
     for row in rows:
         (
-            note_id, title, score_100, score_20, region, tasting_notes,
+            note_id, title, score_100, score_20, region,
             tasting_date, taster, price, price_format, price_channel,
             producer, distributor, grape, cspc, upc, url,
         ) = row
@@ -121,7 +120,6 @@ def _search_sync(
                 score_100=score_100 or 0,
                 score_20=score_20 or "",
                 region=region or "",
-                tasting_notes=tasting_notes or "",
                 tasting_date=tasting_date or "",
                 taster=taster or "",
                 price=price,
@@ -171,7 +169,7 @@ def format_results(results: list[GismondiResult], query: str) -> str:
     if not results:
         return f"No Gismondi reviews found for '{query}'."
 
-    lines = [f"Gismondi Reviews: {len(results)} results for '{query}'\n"]
+    lines = [f"Gismondi on Wine (gismondionwine.com): {len(results)} results for '{query}'\n"]
 
     for i, r in enumerate(results, 1):
         parts = [f"{i}. {r.title}  ({r.score_100}/100 — {r.taster})"]
@@ -190,17 +188,11 @@ def format_results(results: list[GismondiResult], query: str) -> str:
                 price_str += f" — {r.price_channel}"
             parts.append(f"   Price: {price_str}")
 
-        if r.tasting_notes:
-            note = r.tasting_notes.strip()
-            if len(note) > 220:
-                note = note[:220].rstrip() + "..."
-            parts.append(f"   Notes: {note}")
-
         if r.tasting_date:
             parts.append(f"   Reviewed: {r.tasting_date}")
 
         if r.url:
-            parts.append(f"   URL: {r.url}")
+            parts.append(f"   Full review: {r.url}")
 
         lines.append("\n".join(parts))
 
