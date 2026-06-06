@@ -33,6 +33,10 @@ data/checkpoints.db
 # Quality eval runs (timestamped result dirs)
 tests/results/
 
+# Generated diagrams (regenerate with draw_graph.py)
+graph.png
+graph_mermaid.md
+
 # Claude Code
 .claude/
 .gstack/
