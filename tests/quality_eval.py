@@ -1,4 +1,4 @@
-"""Main runner for BC Wine AI quality eval.
+"""Main runner for Vancouver Drinks AI quality eval.
 
 Run from the project root:
 
@@ -426,7 +426,7 @@ def aggregate(results: list[dict]) -> dict:
         )
     if limit_violations:
         top_issues.append(
-            f"**Per-turn 호출 한도 초과 {limit_violations}건** — tavily(≤1) 초과. `prompts.py` 의 한도 문구를 더 강하게 표현 필요."
+            f"**Per-turn 호출 한도 초과 {limit_violations}건** — search_web_grounded(≤1) 초과. `prompts.py` 의 한도 문구를 더 강하게 표현 필요."
         )
     judge_relevance = judge_avg.get("relevance")
     if judge_relevance is not None and judge_relevance < 3.5:
@@ -727,8 +727,7 @@ def _preflight_check() -> list[str]:
     env_path = _PROJECT_ROOT / ".env"
     if not env_path.exists():
         warnings.append(
-            f".env file not found at {env_path}. "
-            "Auth-gated tools (Tavily) will return 'unavailable'."
+            f".env file not found at {env_path}."
         )
 
     # Vertex AI / Gemini ADC

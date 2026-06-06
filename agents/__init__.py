@@ -3,7 +3,7 @@
 Target architecture (CHALLENGE_PLAN.md v2 — Supervisor + 3 Specialists):
 
     Supervisor  → routes, synthesizes, owns clarification + preferences
-      ├─ Sourcing Agent   — 6 store tools + Google Maps (price / stock / where-to-buy)
+      ├─ Sourcing Agent   — 6 store tools (price / stock / where-to-buy)
       ├─ Sommelier Agent  — pairing + all-category drinks knowledge + Google grounding
       └─ Menu Architect   — (B2B) food menu → beverage menu design + sourcing
 

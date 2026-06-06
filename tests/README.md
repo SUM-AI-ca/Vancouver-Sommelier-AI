@@ -1,6 +1,6 @@
 # Quality Eval — Local Runbook
 
-Golden-query eval pipeline for the BC Wine AI Agent. Run on your own machine.
+Golden-query eval pipeline for Vancouver Drinks AI. Run on your own machine.
 
 ## What it does
 
@@ -24,12 +24,9 @@ Output lands in `tests/results/<YYYYMMDD-HHMMSS>/` (gitignored).
 ```bash
 # From project root
 gcloud auth application-default login        # Vertex AI ADC for Gemini
-python build_db.py                            # Build data/wines.db (FTS5)
-# .env must contain: WINEALIGN_EMAIL / WINEALIGN_PASSWORD / TAVILY_API_KEY /
-#                    ROBERT_PARKER_EMAIL / ROBERT_PARKER_PASSWORD / ROBERT_PARKER_API_KEY
 ```
 
-The runner prints warnings for anything missing but doesn't block — auth-gated tools (WineAlign, Robert Parker, Tavily) just return `{"status": "unavailable"}` and the rest of the suite continues.
+The runner prints warnings for anything missing but doesn't block — the rest of the suite continues.
 
 ## Run it
 
@@ -90,9 +87,9 @@ Iteration history lives in `docs/AGENT_DESIGN.md` §16.5.
 |---|---|
 | `INV` | Inventory / "where can I buy" — must parallel-fan-out 4 store tools |
 | `CRI` | Critic reviews — must cite by critic name + source |
-| `PAIR-W` | Western pairing — answer from built-in knowledge, no Tavily |
+| `PAIR-W` | Western pairing — answer from built-in knowledge |
 | `PAIR-C` | Complex pairing — may invoke `reasoning_pair_wine` |
-| `PAIR-N` | Non-Western pairing — Tavily allowed |
+| `PAIR-N` | Non-Western pairing — web grounding allowed |
 | `EDU` | Regional / educational |
 | `DISC` | Open-ended discovery |
 | `BEG` | Beginner-tier — friendly, jargon-light |
@@ -115,6 +112,6 @@ Iteration history lives in `docs/AGENT_DESIGN.md` §16.5.
 - `quality_eval.py` — the runner. CLI + per-query loop + aggregation + summary rendering.
 - `metrics.py` — pure-Python deterministic checks (no LLM).
 - `judge.py` — single LLM call per turn with the rubric.
-- `golden_queries.py` — the 38 queries across 13 categories. Each entry sets `expected_tools_all_of` / `forbidden_tools` / `must_mention` / `min_distinct_stores_cited` / `hallucination_check_fields` / `max_latency_s`.
+- `golden_queries.py` — golden queries across multiple categories. Each entry sets `expected_tools_all_of` / `forbidden_tools` / `must_mention` / `min_distinct_stores_cited` / `hallucination_check_fields` / `max_latency_s`.
 - `__init__.py` — empty; just makes `tests` a package.
 - `results/` — gitignored output directory.

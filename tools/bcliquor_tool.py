@@ -1,5 +1,5 @@
 """
-BC Liquor Store Search Tool for BC Wine AI Agent (LangGraph)
+BC Liquor Store Search Tool for Vancouver Drinks AI (LangGraph)
 
 Uses the public Elasticsearch JSON API at bcliquorstores.com.
 No login required.
@@ -95,7 +95,7 @@ async def search_bcliquor(
     """
     all_results: list[BCLiquorResult] = []
 
-    async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
+    async with httpx.AsyncClient(timeout=20.0, headers=HEADERS) as client:
         for page in range(1, max_pages + 1):
             params = {
                 "search": _clean_query(query),

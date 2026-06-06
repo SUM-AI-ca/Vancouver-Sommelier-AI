@@ -1,5 +1,5 @@
 """
-Okanagan Cellars Search Tool for BC Wine AI Agent (LangGraph)
+Okanagan Cellars Search Tool for Vancouver Drinks AI (LangGraph)
 
 Uses the public JSON API at okanagancellars.com.
 No login required.
@@ -117,7 +117,7 @@ async def search_okanagan_cellars(query: str) -> list[OkanaganCellarsResult]:
     Args:
         query: Wine name, winery, or varietal (e.g., "tantalus", "checkmate", "pinot noir")
     """
-    async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
+    async with httpx.AsyncClient(timeout=20.0, headers=HEADERS) as client:
         return await search_with_fallback(lambda q: _search_once(client, q), query)
 
 

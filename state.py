@@ -1,4 +1,4 @@
-"""AgentState for the BC Wine AI Agent."""
+"""AgentState for Vancouver Drinks AI."""
 
 from typing import Annotated, NotRequired, TypedDict
 

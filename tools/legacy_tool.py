@@ -1,5 +1,5 @@
 """
-Legacy Liquor Store Search Tool for BC Wine AI Agent (LangGraph)
+Legacy Liquor Store Search Tool for Vancouver Drinks AI (LangGraph)
 
 Uses a GraphQL API (Apollo Server on Google Cloud Run).
 No login required. Rich product data with price filtering and staff picks.
@@ -242,7 +242,7 @@ async def search_legacy(
     # The fallback returns only the result list; capture the matching total via a holder.
     captured = {"total": 0}
 
-    async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
+    async with httpx.AsyncClient(timeout=20.0, headers=HEADERS) as client:
         async def attempt(q: str) -> list[LegacyResult]:
             items, total = await _legacy_search_once(client, base_variables, q)
             captured["total"] = total

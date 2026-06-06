@@ -1,4 +1,4 @@
-"""Vision extraction for the BC Wine AI Agent.
+"""Vision extraction for Vancouver Drinks AI.
 
 A multimodal Gemini pass that reads an attached photo — a single wine **label** or a
 restaurant **wine list** — and transcribes what is printed into a structured record
@@ -12,6 +12,9 @@ Design notes live in docs/VISION_NODE_DESIGN.md. Two rules drive the schema:
      guarantee that anything visible survives even if it doesn't fit a named field.
 """
 
+import asyncio
+import json
+import logging
 from typing import Literal
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -20,17 +23,21 @@ from pydantic import BaseModel, Field
 from models import get_llm
 from prompts import VISION_EXTRACTION_PROMPT
 
+log = logging.getLogger(__name__)
+
 
 # ── Extraction schema ────────────────────────────────────────────────
 
-class WineLabelExtraction(BaseModel):
-    producer: str | None = Field(None, description="Winery / producer, as printed.")
-    wine_name: str | None = Field(None, description="Cuvée / product name, as printed.")
-    varietal: str | None = Field(None, description="Grape variety or blend, as printed.")
+class DrinkLabelExtraction(BaseModel):
+    category: str | None = Field(None, description="Drink category: wine, beer, spirits, cider, sake, etc.")
+    producer: str | None = Field(None, description="Producer / winery / brewery / distillery, as printed.")
+    product_name: str | None = Field(None, description="Product / cuvée / brand name, as printed.")
+    style: str | None = Field(None, description="Grape variety, beer style, spirit type, etc., as printed.")
     vintage: str | None = Field(None, description='Year as a string, or "NV". Null if absent.')
     region: str | None = Field(None, description="Region / appellation, as printed.")
     country: str | None = None
     abv: str | None = Field(None, description='Alcohol, as printed (e.g. "13.5%").')
+    volume: str | None = Field(None, description='Volume as printed (e.g. "750ml", "355ml").')
     legible: bool = Field(True, description="False when the label is too blurry/cropped to read reliably.")
     other_text: list[str] = Field(
         default_factory=list,
@@ -38,20 +45,21 @@ class WineLabelExtraction(BaseModel):
     )
 
 
-class WineListItem(BaseModel):
+class DrinkListItem(BaseModel):
     raw_text: str = Field(description="The line copied EXACTLY as printed. The verbatim anchor.")
-    wine_name: str | None = None
+    product_name: str | None = None
     producer: str | None = None
-    varietal: str | None = None
+    style: str | None = Field(None, description="Grape variety, beer style, spirit type, cocktail name, etc.")
     vintage: str | None = None
     region: str | None = None
     price: str | None = Field(None, description='Price exactly as printed, incl. currency / glass-bottle split (e.g. "14 / 58").')
     by_the_glass: bool | None = None
-    section: str | None = Field(None, description='Menu section heading (e.g. "Reds", "By the Glass").')
+    section: str | None = Field(None, description='Menu section heading (e.g. "Reds", "By the Glass", "Draft Beer", "Cocktails").')
+    category: str | None = Field(None, description="wine, beer, spirits, cocktail, cider, sake, etc.")
 
 
-class WineListExtraction(BaseModel):
-    items: list[WineListItem] = Field(default_factory=list)
+class DrinkListExtraction(BaseModel):
+    items: list[DrinkListItem] = Field(default_factory=list)
 
 
 class FoodMenuItem(BaseModel):
@@ -68,9 +76,9 @@ class FoodMenuExtraction(BaseModel):
 
 
 class VisionExtraction(BaseModel):
-    document_type: Literal["label", "wine_list", "food_menu", "other"]
-    label: WineLabelExtraction | None = None
-    wine_list: WineListExtraction | None = None
+    document_type: Literal["label", "drink_list", "food_menu", "other"]
+    label: DrinkLabelExtraction | None = None
+    drink_list: DrinkListExtraction | None = None
     food_menu: FoodMenuExtraction | None = None
     notes: str | None = Field(None, description="Image quality issues: blur, crop, glare, handwriting, etc.")
 
@@ -141,6 +149,49 @@ def extract_text(msg: BaseMessage) -> str:
 
 # ── Extraction ───────────────────────────────────────────────────────
 
+def _parse_raw_to_extraction(raw_content) -> VisionExtraction | None:
+    """Best-effort parse of raw LLM text into VisionExtraction.
+
+    Gemini's function-calling mode sometimes produces a valid JSON body that the
+    automatic Pydantic parser rejects (e.g. food_menu with many items). This
+    fallback manually extracts the JSON and validates it.
+    """
+    text = raw_content
+    if not isinstance(text, str):
+        if isinstance(text, list):
+            text = "".join(
+                p.get("text", "") if isinstance(p, dict) else str(p) for p in text
+            )
+        else:
+            return None
+    text = text.strip()
+    if not text:
+        return None
+    # Strip markdown fences if present
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(data, dict):
+        try:
+            return VisionExtraction.model_validate(data)
+        except Exception:  # noqa: BLE001
+            pass
+    return None
+
+
+_VISION_TIMEOUT = 45.0
+
+_JSON_FALLBACK_SUFFIX = """
+
+## Output format
+Return your answer as a SINGLE JSON object (no markdown fences, no commentary).
+Schema: {"document_type": "label"|"wine_list"|"food_menu"|"other", "label": {...}|null, "wine_list": {"items":[...]}|null, "food_menu": {"items":[...], "cuisine":...|null}|null, "notes":...|null}
+"""
+
+
 async def extract_vision(image_urls: list[str], user_text: str = "") -> VisionExtraction:
     """Run the multimodal extraction pass over one or more image data-URLs.
 
@@ -152,34 +203,50 @@ async def extract_vision(image_urls: list[str], user_text: str = "") -> VisionEx
 
     user_hint = user_text.strip()
     preamble = (
-        "Transcribe the attached wine image(s) into the structured schema."
+        "Transcribe the attached image(s) into the structured schema."
         + (f' The user also wrote: "{user_hint}".' if user_hint else "")
     )
     parts: list[dict] = [{"type": "text", "text": preamble}]
     for url in image_urls:
         parts.append({"type": "image_url", "image_url": {"url": url}})
 
-    llm = get_llm(temperature=0.0).with_structured_output(VisionExtraction)
-    try:
-        result = await llm.ainvoke([
-            SystemMessage(content=VISION_EXTRACTION_PROMPT),
-            HumanMessage(content=parts),
-        ])
-    except Exception as e:  # noqa: BLE001 — never let a vision failure kill the turn
-        return VisionExtraction(
-            document_type="other",
-            notes=f"Image could not be analyzed ({type(e).__name__}).",
-        )
+    messages = [
+        SystemMessage(content=VISION_EXTRACTION_PROMPT),
+        HumanMessage(content=parts),
+    ]
 
-    if isinstance(result, VisionExtraction):
-        return result
-    # Defensive: some configs return a plain dict instead of the model instance.
-    if isinstance(result, dict):
-        try:
-            return VisionExtraction(**result)
-        except Exception:  # noqa: BLE001
-            pass
-    return VisionExtraction(document_type="other", notes="Unrecognized extraction result.")
+    # Fast path: function-calling structured output (reliable for labels).
+    try:
+        llm = get_llm(temperature=0.0).with_structured_output(VisionExtraction)
+        result = await asyncio.wait_for(llm.ainvoke(messages), timeout=_VISION_TIMEOUT)
+        if isinstance(result, VisionExtraction):
+            return result
+    except asyncio.TimeoutError:
+        log.warning("vision: structured output timed out after %ss", _VISION_TIMEOUT)
+    except Exception as e:  # noqa: BLE001
+        log.warning("vision: structured output failed (%s: %s)", type(e).__name__, e)
+
+    # Fallback: plain LLM call + manual JSON parsing. Complex schemas
+    # (food_menu with many items) can fail function-calling but succeed
+    # when Gemini outputs free-form JSON.
+    try:
+        raw_messages = [
+            SystemMessage(content=VISION_EXTRACTION_PROMPT + _JSON_FALLBACK_SUFFIX),
+            HumanMessage(content=parts),
+        ]
+        llm_raw = get_llm(temperature=0.0)
+        response = await asyncio.wait_for(llm_raw.ainvoke(raw_messages), timeout=_VISION_TIMEOUT)
+        fallback = _parse_raw_to_extraction(response.content)
+        if fallback is not None:
+            log.info("vision: used raw-content fallback parsing")
+            return fallback
+        log.warning("vision: raw fallback returned unparseable content")
+    except asyncio.TimeoutError:
+        log.warning("vision: raw fallback timed out after %ss", _VISION_TIMEOUT)
+    except Exception as e:  # noqa: BLE001
+        log.warning("vision: raw fallback also failed (%s: %s)", type(e).__name__, e)
+
+    return VisionExtraction(document_type="other", notes="Image extraction parsing failed.")
 
 
 # ── Formatting for the orchestrator ──────────────────────────────────
@@ -195,15 +262,18 @@ def format_extraction(extraction: VisionExtraction) -> str:
 
     if dt == "label" and extraction.label is not None:
         lab = extraction.label
-        lines = ["Document type: wine label (one wine)."]
+        cat = lab.category or "drink"
+        lines = [f"Document type: {cat} label (one product)."]
         lines += _kv_lines([
+            ("Category", lab.category),
             ("Producer", lab.producer),
-            ("Wine name", lab.wine_name),
-            ("Varietal", lab.varietal),
+            ("Product name", lab.product_name),
+            ("Style", lab.style),
             ("Vintage", lab.vintage),
             ("Region", lab.region),
             ("Country", lab.country),
             ("ABV", lab.abv),
+            ("Volume", lab.volume),
         ])
         if not lab.legible:
             lines.append("- Legibility: LOW — read with caution, ask the user to confirm.")
@@ -215,18 +285,19 @@ def format_extraction(extraction: VisionExtraction) -> str:
             lines.append("- (No label text could be read.)")
         return "\n".join(lines)
 
-    if dt == "wine_list" and extraction.wine_list is not None:
-        items = extraction.wine_list.items
-        lines = [f"Document type: wine list / menu ({len(items)} wines extracted)."]
+    if dt == "drink_list" and extraction.drink_list is not None:
+        items = extraction.drink_list.items
+        lines = [f"Document type: drink list / menu ({len(items)} items extracted)."]
         if extraction.notes:
             lines.append(f"Image notes: {extraction.notes}")
         for i, it in enumerate(items, 1):
             head = f"{i}. {it.raw_text}".rstrip()
             lines.append(head)
             detail = _kv_lines([
+                ("category", it.category),
                 ("producer", it.producer),
-                ("wine", it.wine_name),
-                ("varietal", it.varietal),
+                ("product", it.product_name),
+                ("style", it.style),
                 ("vintage", it.vintage),
                 ("region", it.region),
                 ("price", it.price),
@@ -234,10 +305,9 @@ def format_extraction(extraction: VisionExtraction) -> str:
             ])
             if it.by_the_glass is True:
                 detail.append("- by the glass")
-            # Indent the parsed detail under its verbatim line.
             lines += ["  " + d for d in detail]
         if not items:
-            lines.append("(No wines could be read from the list.)")
+            lines.append("(No drinks could be read from the list.)")
         return "\n".join(lines)
 
     if dt == "food_menu" and extraction.food_menu is not None:
@@ -271,27 +341,29 @@ def format_extraction(extraction: VisionExtraction) -> str:
 if __name__ == "__main__":
     label = VisionExtraction(
         document_type="label",
-        label=WineLabelExtraction(
-            producer="Quails' Gate", wine_name="Stewart Family Reserve",
-            varietal="Pinot Noir", vintage="2021", region="Okanagan Valley",
-            country="Canada", abv="13.5%", other_text=["VQA", "BC"],
+        label=DrinkLabelExtraction(
+            category="wine", producer="Quails' Gate", product_name="Stewart Family Reserve",
+            style="Pinot Noir", vintage="2021", region="Okanagan Valley",
+            country="Canada", abv="13.5%", volume="750ml", other_text=["VQA", "BC"],
         ),
     )
-    wine_list = VisionExtraction(
-        document_type="wine_list",
-        wine_list=WineListExtraction(items=[
-            WineListItem(raw_text="Mission Hill Reserve Chardonnay 2020 — 16 / 64",
-                         producer="Mission Hill", wine_name="Reserve Chardonnay",
-                         varietal="Chardonnay", vintage="2020", price="16 / 64",
-                         by_the_glass=True, section="By the Glass"),
-            WineListItem(raw_text="Blue Mountain Brut NV ... 78", producer="Blue Mountain",
-                         vintage="NV", price="78", section="Sparkling"),
+    drink_list = VisionExtraction(
+        document_type="drink_list",
+        drink_list=DrinkListExtraction(items=[
+            DrinkListItem(raw_text="Mission Hill Reserve Chardonnay 2020 — 16 / 64",
+                          producer="Mission Hill", product_name="Reserve Chardonnay",
+                          style="Chardonnay", vintage="2020", price="16 / 64",
+                          by_the_glass=True, section="By the Glass", category="wine"),
+            DrinkListItem(raw_text="33 Acres of Sunshine — 9",
+                          producer="33 Acres", product_name="Sunshine",
+                          style="French Blanche", price="9",
+                          section="Draft Beer", category="beer"),
         ]),
         notes="lower-right corner slightly out of frame",
     )
     other = VisionExtraction(document_type="other", notes="Looks like a coffee menu.")
 
-    for ex in (label, wine_list, other):
+    for ex in (label, drink_list, other):
         print("=" * 64)
         print(format_extraction(ex))
     print("=" * 64)

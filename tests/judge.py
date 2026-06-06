@@ -1,4 +1,4 @@
-"""LLM-as-Judge for BC Wine AI quality eval.
+"""LLM-as-Judge for Vancouver Drinks AI quality eval.
 
 Uses Gemini 3.1 Pro as judge (separate from the agent's Gemini 3.5 Flash) at temperature=0.0.
 Scores responses on 5 dimensions: relevance / correctness / helpfulness / coherence / harmlessness.
@@ -16,7 +16,7 @@ from tests.metrics import to_text
 
 
 JUDGE_SYSTEM_PROMPT = """\
-You are a strict evaluator for a BC Wine AI Agent's response.
+You are a strict evaluator for a Vancouver Drinks AI agent's response.
 
 You will see:
 1. The user's question.

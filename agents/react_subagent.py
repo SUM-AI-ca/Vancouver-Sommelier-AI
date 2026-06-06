@@ -26,8 +26,9 @@ def build_react_subagent(
     system_prompt: str,
     tools: list,
     *,
-    temperature: float = 0.2,
-    max_rounds: int = 4,
+    temperature: float = 0.1,
+    max_rounds: int = 5,
+    model: str | None = None,
 ):
     """Compile a bounded ReAct sub-graph over `tools` with `system_prompt`.
 
@@ -36,7 +37,7 @@ def build_react_subagent(
     """
 
     async def agent_node(state: AgentState) -> dict:
-        llm = get_llm(temperature=temperature)
+        llm = get_llm(temperature=temperature, model=model)
         if _count_tool_rounds(state["messages"]) < max_rounds:
             llm = llm.bind_tools(tools)
         messages = [SystemMessage(content=system_prompt)] + state["messages"]

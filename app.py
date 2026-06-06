@@ -50,7 +50,7 @@ _log_langsmith_status()
 PROXY_SECRET = os.getenv("PROXY_SECRET", "")
 
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="BC Wine AI Agent")
+app = FastAPI(title="Vancouver Drinks AI")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -170,8 +170,8 @@ def _summarize_tool_output(output) -> list[dict]:
         if r.get("region"):
             subtitle_bits.append(str(r["region"]))
         if price is not None:
-            # WineAlign scrapes the price already prefixed with "$", BC Liquor
-            # returns a bare number. Normalize so we never end up with "$$".
+            # Some store APIs return the price already prefixed with "$".
+            # Normalize so we never end up with "$$".
             p_str = str(price).strip()
             for prefix in ("CA$", "C$", "CAD", "USD"):
                 if p_str.upper().startswith(prefix):
@@ -198,7 +198,6 @@ def _summarize_tool_output(output) -> list[dict]:
     if not rows:
         answer_titles = {
             "search_web_grounded": "Web answer",
-            "search_tavily": "Web answer",
             "sourcing_agent": "Sourcing agent",
             "sommelier_agent": "Sommelier agent",
             "menu_architect": "Menu architect",
@@ -235,15 +234,17 @@ def _summarize_tool_output(output) -> list[dict]:
 AGENT_TOOLS = {"sourcing_agent_tool", "sommelier_agent_tool", "menu_architect_tool"}
 
 INNER_TOOL_LABELS = {
-    "search_bcliquor": "BC Liquor Store",
-    "search_everything_wine": "Everything Wine",
-    "search_okanagan_cellars": "Okanagan Cellars",
-    "search_suttonplace": "Sutton Place Wine Merchant",
-    "search_marquis": "Marquis Wine Cellars",
-    "search_legacy_liquor_store": "Legacy Liquor Store",
-    "search_web_grounded": "Web Search",
-    "reasoning_pair_wine": "Wine Pairing",
-    "sourcing_agent": "Sourcing Agent",
+    "search_bcliquor_tool": "BC Liquor Store",
+    "search_everything_wine_tool": "Everything Wine",
+    "search_okanagan_cellars_tool": "Okanagan Cellars",
+    "search_suttonplace_tool": "Sutton Place Wine Merchant",
+    "search_marquis_tool": "Marquis Wine Cellars",
+    "search_legacy_liquor_store_tool": "Legacy Liquor Store",
+    "search_web_grounded_tool": "Web Search",
+    "reasoning_pair_wine_tool": "Wine Pairing",
+    "sourcing_agent_tool": "Sourcing Agent",
+    "update_preferences_tool": "Preferences",
+    "ask_user_clarification_tool": "Clarification",
 }
 
 
@@ -304,20 +305,35 @@ def _summarize_vision(extractions) -> list[dict]:
         if dtype == "label" and isinstance(ex.get("label"), dict):
             lab = ex["label"]
             title = " ".join(
-                str(x) for x in (lab.get("producer"), lab.get("wine_name")) if x
-            ) or "Wine label"
-            bits = [lab.get("varietal"), lab.get("vintage"), lab.get("region"), lab.get("abv")]
+                str(x) for x in (lab.get("producer"), lab.get("product_name")) if x
+            ) or "Drink label"
+            bits = [lab.get("category"), lab.get("style"), lab.get("vintage"), lab.get("region"), lab.get("abv")]
             rows.append({
                 "title": title[:160],
                 "subtitle": " · ".join(str(b) for b in bits if b)[:200],
                 "url": None,
             })
-        elif dtype == "wine_list" and isinstance(ex.get("wine_list"), dict):
-            for it in ex["wine_list"].get("items", []):
+        elif dtype == "drink_list" and isinstance(ex.get("drink_list"), dict):
+            for it in ex["drink_list"].get("items", []):
                 if not isinstance(it, dict):
                     continue
-                title = it.get("wine_name") or it.get("raw_text") or "Wine"
-                bits = [it.get("producer"), it.get("vintage"), it.get("region"), it.get("price")]
+                title = it.get("product_name") or it.get("raw_text") or "Drink"
+                bits = [it.get("category"), it.get("producer"), it.get("style"), it.get("price")]
+                rows.append({
+                    "title": str(title)[:160],
+                    "subtitle": " · ".join(str(b) for b in bits if b)[:200],
+                    "url": None,
+                })
+        elif dtype == "food_menu" and isinstance(ex.get("food_menu"), dict):
+            fm = ex["food_menu"]
+            cuisine = fm.get("cuisine")
+            for it in fm.get("items", []):
+                if not isinstance(it, dict):
+                    continue
+                title = it.get("dish_name") or it.get("raw_text") or "Dish"
+                bits = [it.get("description"), it.get("price"), it.get("section")]
+                if cuisine:
+                    bits.append(cuisine)
                 rows.append({
                     "title": str(title)[:160],
                     "subtitle": " · ".join(str(b) for b in bits if b)[:200],
@@ -325,7 +341,7 @@ def _summarize_vision(extractions) -> list[dict]:
                 })
         elif dtype == "other":
             rows.append({
-                "title": "Not a wine image",
+                "title": "Not a recognized image",
                 "subtitle": str(ex.get("notes") or "")[:200],
                 "url": None,
             })
@@ -365,6 +381,7 @@ async def chat(req: ChatRequest, request: Request):
     async def event_stream():
         graph = _get_graph()
         config = {
+            "recursion_limit": 30,
             "configurable": {"thread_id": req.thread_id},
             "tags": ["bc-wine-agent", "chat"],
             "metadata": {

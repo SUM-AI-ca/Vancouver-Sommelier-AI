@@ -1,5 +1,5 @@
 """
-Sutton Place Wine Merchant Search Tool for BC Wine AI Agent (LangGraph)
+Sutton Place Wine Merchant Search Tool for Vancouver Drinks AI (LangGraph)
 
 Uses the public JSON API at store.suttonplacewinemerchant.com (Barnet Network).
 Same platform as Okanagan Cellars — identical API structure, different shop ID.
@@ -137,7 +137,7 @@ async def search_suttonplace(query: str) -> list[SuttonPlaceResult]:
     Args:
         query: Wine name, winery, or varietal (e.g., "pinot noir", "mission hill")
     """
-    async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
+    async with httpx.AsyncClient(timeout=20.0, headers=HEADERS) as client:
         return await search_with_fallback(lambda q: _search_once(client, q), query)
 
 

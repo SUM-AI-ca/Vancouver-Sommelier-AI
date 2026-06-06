@@ -65,7 +65,7 @@ def _filter_previous_turns(messages: list) -> list:
 
 async def orchestrator_node(state: AgentState) -> dict:
     over_budget = _count_tool_rounds_this_turn(state["messages"]) >= MAX_TOOL_ROUNDS
-    llm = get_llm(temperature=0.2)
+    llm = get_llm(temperature=0.1)
     if not over_budget:
         llm = llm.bind_tools(TOOLS)
 
@@ -92,7 +92,7 @@ async def orchestrator_node(state: AgentState) -> dict:
     return {"messages": [response]}
 
 
-MAX_TOOL_ROUNDS = 6  # safety net for prompts.py C3 (≤5 rounds expected, +1 buffer)
+MAX_TOOL_ROUNDS = 7
 
 
 def _count_tool_rounds_this_turn(messages: list) -> int:

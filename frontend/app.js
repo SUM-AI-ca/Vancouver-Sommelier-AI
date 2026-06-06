@@ -1,4 +1,4 @@
-/* BC Wine — SSE chat client */
+/* Vancouver Drinks AI — SSE chat client */
 
 const API_BASE = "";
 
@@ -70,8 +70,6 @@ const TOOL_LABELS = {
   search_suttonplace_tool: "Sutton Place Wine Merchant",
   search_marquis_tool: "Marquis Wine Cellars",
   search_legacy_liquor_store_tool: "Legacy Liquor Store",
-  search_tavily_tool: "Web Search",
-  search_gismondi_tool: "Gismondi On Wine",
   reasoning_pair_wine_tool: "Wine Pairing",
   update_preferences_tool: "Preferences",
   ask_user_clarification_tool: "Clarification",
@@ -197,7 +195,7 @@ function addToolBadge(toolName, runId) {
 
 function renderToolRow(row) {
   const title = escapeHtml(row.title || "");
-  // Long-form bodies (sommelier reasoning, Tavily summary) come through with
+  // Long-form bodies (sommelier reasoning, web grounding) come through with
   // markdown:true so they render with paragraphs/lists instead of getting
   // clipped into a single subtitle line.
   if (row.markdown && row.body) {

@@ -1,4 +1,4 @@
-"""LLM factory for the BC Wine AI Agent — Gemini via Vertex AI."""
+"""LLM factory for Vancouver Drinks AI — Gemini via Vertex AI."""
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -8,16 +8,16 @@ MODEL = "gemini-3.5-flash"
 JUDGE_MODEL = "gemini-3.1-pro-preview"
 
 
-def get_llm(temperature: float = 0.1) -> ChatGoogleGenerativeAI:
+def get_llm(temperature: float = 0.1, model: str | None = None) -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
-        model=MODEL,
+        model=model or MODEL,
         project=PROJECT,
         location=LOCATION,
         temperature=temperature,
     )
 
 
-def get_grounded_llm(temperature: float = 0.2) -> ChatGoogleGenerativeAI:
+def get_grounded_llm(temperature: float = 0.1) -> ChatGoogleGenerativeAI:
     """Gemini configured for Google Search grounding.
 
     Returns the base LLM; callers enable grounding by binding the built-in Google

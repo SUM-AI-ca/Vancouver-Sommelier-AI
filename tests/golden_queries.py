@@ -32,8 +32,6 @@ KNOWN_BC_WINERIES = {
 # Known critic names (used by the critic-citation metric; reviews now come from grounding)
 KNOWN_CRITICS = {
     "John Szabo", "Sara d'Amato", "Sara d Amato", "Sara dAmato",
-    "Robert Parker", "Parker",
-    "Mark Squires",
     "David Lawrason", "Rhys Pender", "Treve Ring",
 }
 

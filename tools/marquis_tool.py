@@ -1,5 +1,5 @@
 """
-Marquis Wine Cellars Search Tool for BC Wine AI Agent (LangGraph)
+Marquis Wine Cellars Search Tool for Vancouver Drinks AI (LangGraph)
 
 Uses the BigCommerce Discovery API at discovery.marquis-wines.com.
 No login required. Rich JSON response with inventory, categories, pricing.
@@ -91,7 +91,7 @@ async def search_marquis(
         "facets": "",
     }
 
-    async with httpx.AsyncClient(timeout=15.0, headers=HEADERS) as client:
+    async with httpx.AsyncClient(timeout=20.0, headers=HEADERS) as client:
         resp = await client.get(API_URL, params=params)
         resp.raise_for_status()
         data = resp.json()

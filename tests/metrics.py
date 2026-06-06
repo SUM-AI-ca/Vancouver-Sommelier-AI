@@ -1,4 +1,4 @@
-"""Deterministic metrics for BC Wine AI quality eval.
+"""Deterministic metrics for Vancouver Drinks AI quality eval.
 
 Pure functions, no LLM. Used by quality_eval.py to score each query's response
 along orchestration / hallucination / coverage / structure dimensions.
@@ -317,9 +317,6 @@ def count_distinct_critics_cited(response_text: str) -> tuple[int, list[str]]:
         "sara d'amato": "Sara d'Amato",
         "sara d amato": "Sara d'Amato",
         "sara damato": "Sara d'Amato",
-        "robert parker": "Robert Parker",
-        "parker": "Robert Parker",
-        "mark squires": "Mark Squires",
         "david lawrason": "David Lawrason",
         "rhys pender": "Rhys Pender",
         "treve ring": "Treve Ring",

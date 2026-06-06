@@ -1,5 +1,5 @@
 """
-Everything Wine Search Tool for BC Wine AI Agent (LangGraph)
+Everything Wine Search Tool for Vancouver Drinks AI (LangGraph)
 
 Scrapes search results from everythingwine.ca/catalogsearch/result/ (server-side
 rendered HTML, no login), then enriches each hit with per-store pickup availability.
@@ -144,7 +144,7 @@ async def search_everything_wine(
         max_store_lookups: Cap on how many hits get the per-store lookup (one parallel
             API call each), to bound latency on large result sets.
     """
-    async with httpx.AsyncClient(follow_redirects=True, timeout=15.0, headers=HEADERS) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=20.0, headers=HEADERS) as client:
         # The Elasticsuite search AND-matches every token, so a full label string
         # ("Mission Hill Perpetua 2022 Chardonnay") can return 0 even when the wine is
         # stocked. search_with_fallback retries with trimmed queries (see query_fallback).

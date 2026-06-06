@@ -54,9 +54,8 @@ def _extract_text(content) -> str:
 
 @tool
 async def search_bcliquor_tool(query: str, max_pages: int = 2, category: str | None = None) -> str:
-    """Search BC Liquor Stores (government retailer, province-wide; serves Vancouver).
-    Largest selection and ALL categories — wine, beer, spirits, cider. Also returns
-    consumer ratings and BC VQA status.
+    """Search BC Liquor Stores (government retailer, Vancouver).
+    Wine, beer, spirits, cider. Also returns consumer ratings and BC VQA status.
     """
     results = await search_bcliquor(query, max_pages=max_pages, category=category)
     return json.dumps({"status": "ok", "tool": "search_bcliquor", "results": [r.model_dump() for r in results]})
@@ -108,7 +107,7 @@ async def search_legacy_liquor_store_tool(
     on_sale: bool | None = None,
     staff_pick: bool | None = None,
 ) -> str:
-    """Search Legacy Liquor Store (Vancouver, full-line liquor: wine, beer, spirits).
+    """Search Legacy Liquor Store (Vancouver). Wine, beer, spirits, cider.
     Supports price_min/price_max filtering, on_sale for deals, and staff_pick for expert recommendations.
     """
     results, total = await search_legacy_liquor_store(
@@ -144,7 +143,7 @@ async def reasoning_pair_wine_tool(dish: str) -> str:
     dishes. Do NOT use for common pairings (steak + Cabernet, salmon + Pinot) — answer
     those from built-in knowledge.
     """
-    llm = get_llm(temperature=0.3)
+    llm = get_llm(temperature=0.15)
     resp = await llm.ainvoke([
         SystemMessage(content=PAIRING_SYSTEM_PROMPT),
         HumanMessage(content=f"What drink pairs best with: {dish}"),
