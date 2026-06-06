@@ -1,27 +1,20 @@
 """LangGraph agent — build_graph() wires the ReAct orchestrator, tools, merge, and synthesis."""
 
-import json
 from datetime import datetime, timezone
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
-from langgraph.types import interrupt
 
+from agent_tools import SUPERVISOR_DIRECT_TOOLS
+from agents.menu_architect import menu_architect_tool
+from agents.sommelier_agent import sommelier_agent_tool
+from agents.sourcing_agent import sourcing_agent_tool
 from models import get_llm
-from prompts import ORCHESTRATOR_SYSTEM_PROMPT, PAIRING_SYSTEM_PROMPT
+from prompts import SUPERVISOR_SYSTEM_PROMPT
 from safety import tool_error_to_json
 from state import AgentState
-from tools.bcliquor_tool import search_bcliquor
-from tools.everythingwine_tool import search_everything_wine
-from tools.gismondi_tool import search_gismondi
-from tools.legacy_tool import search_legacy as search_legacy_liquor_store
-from tools.marquis_tool import search_marquis
-from tools.okanagan_cellars_tool import search_okanagan_cellars
-from tools.suttonplace_tool import search_suttonplace
-from tools.tavily_tool import search_tavily
 from vision import (
     extract_image_urls,
     extract_text,
@@ -32,199 +25,15 @@ from vision import (
 )
 
 
-# ── LangChain @tool wrappers ─────────────────────────────────────
-
-@tool
-async def search_bcliquor_tool(query: str, max_pages: int = 2, category: str | None = None) -> str:
-    """Search BC Liquor Stores (government retailer, province-wide) for wines, prices, and availability.
-    Largest selection. Also returns consumer ratings and BC VQA status.
-    """
-    results = await search_bcliquor(query, max_pages=max_pages, category=category)
-    return json.dumps({"status": "ok", "tool": "search_bcliquor", "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_everything_wine_tool(query: str) -> str:
-    """Search Everything Wine for wines, prices, and availability across Lower Mainland stores
-    (Vancouver, North Vancouver, South Surrey, Langley).
-    Also shows home-delivery status and exact per-store stock quantities.
-    """
-    results = await search_everything_wine(query)
-    return json.dumps({"status": "ok", "tool": "search_everything_wine", "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_okanagan_cellars_tool(query: str) -> str:
-    """Search Okanagan Cellars (Vancouver, 2 locations) for wines, prices, and availability.
-    Often has competitive pricing on BC wines. Also shows exact stock quantities and unit sizes.
-    """
-    results = await search_okanagan_cellars(query)
-    return json.dumps({"status": "ok", "tool": "search_okanagan_cellars", "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_suttonplace_tool(query: str) -> str:
-    """Search Sutton Place Wine Merchant (Vancouver, Yaletown) for wines, prices, and availability.
-    Also shows vintage, varietal, country, alcohol %, and staff picks.
-    """
-    results = await search_suttonplace(query)
-    return json.dumps({"status": "ok", "tool": "search_suttonplace", "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_marquis_tool(query: str, limit: int = 20, skip: int = 0) -> str:
-    """Search Marquis Wine Cellars (Vancouver, curated boutique) for wines, prices, and availability.
-    Boutique selection with hierarchical categories and MSRP pricing.
-    """
-    results, total = await search_marquis(query, limit=limit, skip=skip)
-    return json.dumps({"status": "ok", "tool": "search_marquis", "total": total, "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_legacy_liquor_store_tool(
-    query: str,
-    limit: int = 20,
-    price_min: float | None = None,
-    price_max: float | None = None,
-    on_sale: bool | None = None,
-    staff_pick: bool | None = None,
-) -> str:
-    """Search Legacy Liquor Store (Vancouver, premium selection) for wines, prices, and availability.
-    Supports price_min/price_max filtering, on_sale for deals, and staff_pick for expert recommendations.
-    """
-    results, total = await search_legacy_liquor_store(
-        query, limit=limit, price_min=price_min, price_max=price_max,
-        on_sale=on_sale, staff_pick=staff_pick,
-    )
-    return json.dumps({"status": "ok", "tool": "search_legacy_liquor_store", "total": total, "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_gismondi_tool(
-    query: str,
-    limit: int = 25,
-    score_min: int = 0,
-    price_max: float | None = None,
-    bc_only: bool = True,
-) -> str:
-    """Search Anthony Gismondi's wine reviews from local database. Deep tasting notes for Canadian wines.
-    Sub-100ms latency. Use for Gismondi's specific opinion or BC wine discovery queries.
-    Supports score_min and price_max filters. bc_only=True biases to BC wines.
-    """
-    results = await search_gismondi(query, limit=limit, score_min=score_min, price_max=price_max, bc_only=bc_only)
-    return json.dumps({"status": "ok", "tool": "search_gismondi", "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def search_tavily_tool(
-    query: str,
-    max_results: int = 8,
-    search_depth: str = "basic",
-    include_answer: bool = True,
-) -> str:
-    """Web search fallback with AI-generated answer summary.
-    Use ONLY for: (1) non-Western cuisine pairings, (2) educational/regional questions,
-    or (3) disambiguation when all store tools return empty.
-    Never as a first-line tool for inventory/pricing.
-    """
-    results, answer = await search_tavily(query, max_results=max_results, search_depth=search_depth, include_answer=include_answer)
-    return json.dumps({"status": "ok", "tool": "search_tavily", "answer": answer, "results": [r.model_dump() for r in results]})
-
-
-@tool
-async def reasoning_pair_wine_tool(dish: str) -> str:
-    """Sommelier sub-LLM for non-trivial food-wine pairings.
-    Use for non-Western cuisines or complex dishes. Do NOT use for common pairings
-    (steak + Cabernet, salmon + Pinot) — answer those from built-in knowledge.
-    """
-    llm = get_llm(temperature=0.3)
-    resp = await llm.ainvoke([
-        SystemMessage(content=PAIRING_SYSTEM_PROMPT),
-        HumanMessage(content=f"What BC wine pairs best with: {dish}"),
-    ])
-    # Gemini returns content as a list of typed parts; str() on that emits the
-    # Python repr ([{'type': 'text', 'text': '...'}]) which leaks into the UI.
-    # _extract_text flattens the list into clean text.
-    content = _extract_text(resp.content)
-    return json.dumps({"status": "ok", "tool": "reasoning_pair_wine", "recommendation": content})
-
-
-@tool
-async def ask_user_clarification_tool(
-    question: str,
-    options: list[str] | None = None,
-) -> str:
-    """Ask the user a clarifying question when the request or available data is genuinely ambiguous.
-
-    Use ONLY when:
-    - The user query has multiple plausible interpretations that would yield very different answers
-      (e.g. "good wine" with no budget/style/occasion hint).
-    - Tool results have several closely-matched wines and the user's preference would break the tie.
-    - Essential information is missing (food pairing request with no dish; "the second one" with no
-      prior context in conversation history).
-
-    Do NOT use when:
-    - A reasonable default answer exists from conversation history.
-    - The query is vague but answerable (e.g. "recommend a red" — just pick ~5 BC reds across styles).
-    - You are stalling instead of making a judgment call.
-
-    Args:
-        question: The clarifying question, written in the SAME language as the user. One sentence.
-        options: Up to 7 short option strings the user can click. Leave empty for free-form replies.
-
-    Returns the user's clarification reply as a string. The user may type free text instead of
-    choosing one of the options.
-    """
-    user_reply = interrupt({
-        "type": "clarification_request",
-        "question": question,
-        "options": options or [],
-    })
-    return json.dumps({
-        "status": "ok",
-        "tool": "ask_user_clarification",
-        "question": question,
-        "user_reply": str(user_reply),
-    })
-
-
-@tool
-async def update_preferences_tool(
-    budget_max: float | None = None,
-    add_varietals: list[str] | None = None,
-    sweetness: str | None = None,
-    style: str | None = None,
-) -> str:
-    """Record a stable user preference for use in future turns.
-    Call when the user expresses a preference that should persist
-    (e.g., "I always want to stay under $50", "I prefer dry whites").
-    Do NOT call for one-off filters within a single query.
-    """
-    return json.dumps({
-        "status": "ok",
-        "tool": "update_preferences",
-        "budget_max": budget_max,
-        "add_varietals": add_varietals,
-        "sweetness": sweetness,
-        "style": style,
-    })
-
-
-# ── Tool list ────────────────────────────────────────────────────
-
-TOOLS = [
-    search_bcliquor_tool,
-    search_everything_wine_tool,
-    search_okanagan_cellars_tool,
-    search_suttonplace_tool,
-    search_marquis_tool,
-    search_legacy_liquor_store_tool,
-    search_gismondi_tool,
-    search_tavily_tool,
-    reasoning_pair_wine_tool,
-    update_preferences_tool,
-    ask_user_clarification_tool,
+# The Supervisor routes to specialist sub-agents (each a @tool over its own ReAct
+# sub-graph in agents/) plus the cross-cutting clarification/preferences tools. The graph
+# node is still named "orchestrator" so app.py's SSE streaming/badge filters are unchanged.
+SUPERVISOR_TOOLS = SUPERVISOR_DIRECT_TOOLS + [
+    sourcing_agent_tool,
+    sommelier_agent_tool,
+    menu_architect_tool,
 ]
+TOOLS = SUPERVISOR_TOOLS
 
 MAX_CLARIFICATIONS_PER_TURN = 3
 
@@ -260,7 +69,7 @@ async def orchestrator_node(state: AgentState) -> dict:
     if not over_budget:
         llm = llm.bind_tools(TOOLS)
 
-    system_parts = [ORCHESTRATOR_SYSTEM_PROMPT]
+    system_parts = [SUPERVISOR_SYSTEM_PROMPT]
 
     if over_budget:
         system_parts.append(
@@ -352,30 +161,6 @@ async def tool_node_with_logging(state: AgentState) -> dict:
 
     new_state = {**result, "tool_call_log": log_entries[-50:]}
     return new_state
-
-
-def _extract_text(content) -> str:
-    """Flatten Gemini's list-of-parts content into plain text.
-
-    Gemini 3.5 returns response.content as a list of dicts like
-    [{"type": "text", "text": "...", "extras": {"signature": "..."}}]
-    when thinking/signing is active. Calling str() on that list leaks
-    the Python repr into the user-facing response. This helper picks
-    out only the text fields, in order.
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-            elif isinstance(item, str):
-                parts.append(item)
-        return "".join(parts)
-    return str(content)
 
 
 # ── Vision node ──────────────────────────────────────────────────

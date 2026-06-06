@@ -746,19 +746,12 @@ def _preflight_check() -> list[str]:
 
     # Per-tool env keys (warn-only)
     optional_keys = {
-        "TAVILY_API_KEY": "Tavily web fallback",
+        "GOOGLE_MAPS_API_KEY": "Google Maps store locator",
     }
     missing = [(k, v) for k, v in optional_keys.items() if not os.environ.get(k)]
     if missing:
         for k, label in missing:
             warnings.append(f"{k} not set — {label} will be unavailable.")
-
-    # Gismondi DB
-    db_path = _PROJECT_ROOT / "data" / "wines.db"
-    if not db_path.exists():
-        warnings.append(
-            f"Gismondi DB not built at {db_path}. Run `python build_db.py` first."
-        )
 
     return warnings
 

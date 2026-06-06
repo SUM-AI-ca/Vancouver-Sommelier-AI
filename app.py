@@ -169,6 +169,10 @@ def _summarize_tool_output(output) -> list[dict]:
             subtitle_bits.append(str(r["producer"]))
         if r.get("region"):
             subtitle_bits.append(str(r["region"]))
+        if r.get("address"):  # Google Maps place
+            subtitle_bits.append(str(r["address"]))
+        if r.get("open_now") is True:
+            subtitle_bits.append("open now")
         if price is not None:
             # WineAlign scrapes the price already prefixed with "$", BC Liquor
             # returns a bare number. Normalize so we never end up with "$$".
@@ -184,7 +188,7 @@ def _summarize_tool_output(output) -> list[dict]:
             subtitle_bits.append(f"{score} pts")
         url = (
             r.get("product_url") or r.get("url") or r.get("wine_url")
-            or r.get("review_url")
+            or r.get("review_url") or r.get("maps_url")
         )
         rows.append({
             "title": str(title)[:160],
@@ -192,14 +196,21 @@ def _summarize_tool_output(output) -> list[dict]:
             "url": url if isinstance(url, str) else None,
         })
 
-    # Tavily and reasoning_pair_wine don't have "results" — surface their answer.
-    # These return long markdown prose; the frontend renders the body as
+    # Grounded web search and reasoning_pair_wine don't have "results" — surface their
+    # answer. These return long markdown prose; the frontend renders the body as
     # markdown (markdown=True) instead of clipping it as a plain subtitle.
     if not rows:
-        if tool == "search_tavily" and data.get("answer"):
+        answer_titles = {
+            "search_web_grounded": "Web answer",
+            "search_tavily": "Web answer",
+            "sourcing_agent": "Sourcing agent",
+            "sommelier_agent": "Sommelier agent",
+            "menu_architect": "Menu architect",
+        }
+        if tool in answer_titles and data.get("answer"):
             rows.append({
-                "title": "Web answer",
-                "body": str(data["answer"])[:4000],
+                "title": answer_titles[tool],
+                "body": str(data["answer"])[:8000],
                 "url": None,
                 "markdown": True,
             })

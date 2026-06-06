@@ -1,0 +1,154 @@
+Google for Startups AI Agents Challenge
+Generative AI Hack
+1531 people
+Deadline:
+Jun 11, 2026 at 05:00pm PDT
+|6 days left
+
+
+
+All eligible startups will receive $500 in credits and a chance to win a share of a $90,000 prize pool!
+
+
+
+The Challenge: From Prototype to Production
+
+Ready to build an autonomous system that drives real business results for your startup? The Google for Startups AI Agents Challenge is your fast-track from prototype to deployment. Get hands-on with Gemini, the recently upgraded Agent Development Kit (ADK), and a complete toolchain to rapidly build, optimize, and manage the entire agent lifecycle.
+
+
+
+This challenge gives you the sandbox and resources to build for reliability before pushing to production. Whether you are architecting a net-new system from scratch or hardening an existing system, choose one of our three tracks to build an agent that doesn't just respond, but acts.
+
+
+
+Challenge Tracks
+
+
+
+Track 1: Build (Net-New Agents)
+
+Start with a blank canvas and a complex business problem. In this track, you will leverage the Agent Development Kit (ADK)—or your preferred open-source framework like LangChain or CrewAI—to architect a net-new autonomous agent. Your goal is to move from static code to declarative intent. Show us how your agent uses the Model Context Protocol (MCP) to securely connect to external tools, gather context, and execute tasks autonomously.
+
+
+
+Track 2: Optimize (Existing Agents)
+
+Got an agent that works in a sandbox but struggles with the edge cases of the real world? This track is about treating AI quality as a rigorous engineering discipline. Bring your existing experimental agent and use our new optimization tools. You will stress-test multi-step reasoning, debug stalled logic, and programmatically refine your system instructions to achieve production-grade reliability and enterprise scale.
+
+
+
+Track 3: Refactor for Google Cloud Marketplace & Gemini Enterprise
+
+Got an existing agent that is ready for prime time? This track is dedicated to taking your current, functional agents and refactoring their architecture to meet the requirements of the Google Cloud ecosystem. This is your opportunity to transform an MVP into a scalable, monetizable asset prepped for listing on the Google Cloud Marketplace and within Gemini Enterprise.
+
+Prize Pool
+$60,000 in cash prizes
+$37,500 in Google Cloud credits
+Virtual coffee with Google exec and other Google Cloud and DeepMind experts'
+VIP tickets to Google event in the Bay Area
+Social promo on Google social channels
+Submission Deadline
+Projects are due by 5:00 PM PT on June 11th, 2026.
+
+Questions
+For any challenge questions please reach out to dani@devpost.com
+
+
+
+Please note, we have limited spaces available for Startups in this Challenge.
+
+Project requirements
+Code
+Video
+Architecture diagram
+Testing access: link/demo/test build, with login if private
+Project categories
+Theme
+Build (Net-New Agents)
+Optimize (Existing Agents)
+Refactor for Google Cloud Marketplace & Gemini Enterprise
+Region
+APAC
+EMEA
+AMERS
+OTHER
+Criteria
+Technical Implementation (30%)
+Business Case (30%)
+Innovation & Creativity (20%)
+Demo and Presentation (20%)
+Awards
+Overall Grand Prize
+Top scoring project.
+
+1 winner
+• $15,000 in USD • $10,000 in Google Cloud Credits for use with a Cloud Billing Account • Virtual Coffee with Google exec and Google Cloud experts • VIP tickets to Google event in the Bay Area • Social Promo on Google social channels
+Best of each Theme
+Top Scoring Project in each of the themes (Build, Optimize, Refactor)
+
+3 winners
+• $10,000 in USD • $7,500 in Google Cloud Credits for use with a Cloud Billing Account • Virtual Coffee with Google Cloud experts • VIP tickets to Google event in the Bay Area • Social Promo on Google social channels
+Regional Winners
+Top Scoring Project in each region (APAC & EMEA)
+
+2 winners
+• $5,000 in USD • $2,500 in Google Cloud Credits for use with a Cloud Billing Account • Virtual Coffee with Google Cloud Experts • Social Promo on Google social channels
+
+Additional details
+Examples
+
+﻿
+
+To help visualize what you can build for the challenge, imagine tackling complex, multi-step workflows, some where multiple specialized agents collaborate.
+
+To improve hiring practices, you could build an Automated Talent Sourcing Agent that screens inbound resumes against open roles, utilizes internal knowledge bases to evaluate candidate experience against company hiring rubrics, and dynamically generates tailored technical interview questions.
+If your focus is IT, you might architect an IT Incident Resolution System that triages backend alerts, queries historical tickets via RAG, and safely runs diagnostics to propose automated fixes.
+Or, you could reinvent logistics with a Dynamic Supply Chain Predictor that monitors real-world weather events and cross-references them with internal inventory data to proactively alert affected clients. These examples illustrate the ultimate goal of the competition: leveraging Gemini Enterprise Agent Platform to move beyond simple chatbots and engineer scalable, production-ready systems that take meaningful action.
+Let’s take a look at a specific example across all three tracks:
+
+
+
+The Concept: A Smart Facility Energy Agent, a multi-agent system designed to help commercial property managers dynamically optimize their building's energy consumption based on occupancy, weather forecasts, and grid pricing.
+
+Track 1
+Build (Net-New Agents): Move from a blank canvas to a functional prototype that connects to external tools and executes tasks autonomously.
+
+The Build: The startup uses the Agent Development Kit (ADK) to build the core orchestration engine. The agent utilizes the Model Context Protocol (MCP) to securely connect to the building's existing IoT HVAC sensors and real-time local weather APIs.
+The Action: Instead of just reporting data, the agent moves from static code to declarative intent. It autonomously lowers heating in unoccupied conference rooms based on scheduled calendar data.
+Track 2
+Optimize (Existing Agents): Take an agent that works in a sandbox and apply rigorous engineering discipline to make it handle real-world edge cases. 
+
+The Action: The agent works well on a normal day, but struggles when a sudden extreme weather event occurs at the same time a utility provider issues a peak-demand pricing surge.
+The Build: The team uses Agent Simulation to generate synthetic user interactions and test the agent against these rare, multi-variable events in a controlled environment. By leveraging Agent Observability, the startup can visually trace the agent's complex reasoning to debug stalled logic where the agent couldn't decide whether to prioritize occupant comfort or energy cost. They then use Agent Optimizer to programmatically refine the system instructions to handle the conflict.
+Track 3
+Refactor (Marketplace & Enterprise Ready): Transform the functional MVP into a scalable, monetizable asset ready for the Google Cloud ecosystem. 
+
+The Build: The startup refactors the agent to run natively on Google Cloud infrastructure, deploying it via Cloud Run or Google Kubernetes Engine (GKE) to ensure effortless scale. They ensure the underlying reasoning engine is exclusively powered by Gemini. To guarantee the agent is secure by design, they implement Agent Identity to assign a unique cryptographic ID to the agent. The team implements the Agent-to-Agent (A2A) protocol. This allows their Energy Agent to seamlessly communicate with a company's internal HR Agent to anticipate building occupancy spikes during all-hands meetings and pre-cool the building during off-peak hours.
+Additional Information for Track 3
+
+To successfully refactor your agent for this track, your final build must migrate to and meet the following architectural mandates:
+
+B2B Focus: The agent's core function must solve a clear business-to-business (B2B) challenge.
+Cloud-Native Runtime: You must migrate the agent’s runtime natively to Google Cloud infrastructure (e.g., deployed via Google Kubernetes Engine (GKE) or Cloud Run).
+Google Cloud Powered Intelligence: The underlying reasoning engine must be swapped to or currently running on Gemini, or a third-party LLM deployed exclusively through Agent Platform.
+A2A Interoperability: Your agent’s communication layer must utilize the Agent-to-Agent (A2A) protocol, ensuring it can be seamlessly discovered by and coordinate with other enterprise agents.
+Key Considerations for Participants
+Focus on the design and orchestration of interactions between multiple agents using the Agent Development Kit.
+Focus on the deployment of your multi-agent system on Agent Engine.
+Clearly articulate a compelling business use case for your multi-agent solution.
+Strategically employ Grounding (using Vertex AI Search, Google Search, Google Maps, private data) and RAG (with Vertex AI Search or custom implementations) to enhance the knowledge and reliability of individual agents within the system.
+Clearly demonstrate how the collaboration between agents, enhanced by effective grounding and retrieval, leads to a more powerful and capable solution than a single agent could achieve.
+Mandatory Technologies
+Your project must be built using Google’s agent platform specifically incorporating:
+
+Intelligence: The Gemini API or a third-party LLM deployed exclusively through Agent Platform.
+Orchestration: The newly launched Agent Development Kit (ADK) or a supported open-source framework (e.g., LangChain, CrewAI) managed on our platform.
+Infrastructure: Google Cloud deployment (e.g., Cloud Run or GKE).
+Resources
+ADK
+The Complete Resource Guide
+﻿Official Rules
+The official rules can be found here.
+
+Additional Questions
+For any additional questions, please email dani@devpost.com or please click the blue question mark on the bottom right side of the page.

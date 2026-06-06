@@ -99,7 +99,7 @@ def collect_wine_context_text(state: dict) -> str:
 
 # Per-turn call limits from prompts.py / AGENT_DESIGN.md §3
 TOOL_CALL_LIMITS = {
-    "search_tavily": 1,
+    "search_web_grounded": 1,
 }
 
 
@@ -317,8 +317,6 @@ def count_distinct_critics_cited(response_text: str) -> tuple[int, list[str]]:
         "sara d'amato": "Sara d'Amato",
         "sara d amato": "Sara d'Amato",
         "sara damato": "Sara d'Amato",
-        "anthony gismondi": "Anthony Gismondi",
-        "gismondi": "Anthony Gismondi",
         "robert parker": "Robert Parker",
         "parker": "Robert Parker",
         "mark squires": "Mark Squires",

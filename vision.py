@@ -54,10 +54,24 @@ class WineListExtraction(BaseModel):
     items: list[WineListItem] = Field(default_factory=list)
 
 
+class FoodMenuItem(BaseModel):
+    raw_text: str = Field(description="The dish line copied EXACTLY as printed. The verbatim anchor.")
+    dish_name: str | None = None
+    description: str | None = Field(None, description="Printed description / key ingredients, as shown.")
+    price: str | None = Field(None, description="Price exactly as printed, incl. currency.")
+    section: str | None = Field(None, description='Menu section / course (e.g. "Starters", "Mains", "Desserts").')
+
+
+class FoodMenuExtraction(BaseModel):
+    items: list[FoodMenuItem] = Field(default_factory=list)
+    cuisine: str | None = Field(None, description="Overall cuisine / style if evident (e.g. Italian, Korean BBQ).")
+
+
 class VisionExtraction(BaseModel):
-    document_type: Literal["label", "wine_list", "other"]
+    document_type: Literal["label", "wine_list", "food_menu", "other"]
     label: WineLabelExtraction | None = None
     wine_list: WineListExtraction | None = None
+    food_menu: FoodMenuExtraction | None = None
     notes: str | None = Field(None, description="Image quality issues: blur, crop, glare, handwriting, etc.")
 
 
@@ -226,9 +240,30 @@ def format_extraction(extraction: VisionExtraction) -> str:
             lines.append("(No wines could be read from the list.)")
         return "\n".join(lines)
 
+    if dt == "food_menu" and extraction.food_menu is not None:
+        fm = extraction.food_menu
+        items = fm.items
+        lines = [f"Document type: food menu ({len(items)} dishes extracted)."]
+        if fm.cuisine:
+            lines.append(f"Cuisine: {fm.cuisine}")
+        if extraction.notes:
+            lines.append(f"Image notes: {extraction.notes}")
+        for i, it in enumerate(items, 1):
+            lines.append(f"{i}. {it.raw_text}".rstrip())
+            detail = _kv_lines([
+                ("dish", it.dish_name),
+                ("description", it.description),
+                ("price", it.price),
+                ("section", it.section),
+            ])
+            lines += ["  " + d for d in detail]
+        if not items:
+            lines.append("(No dishes could be read from the menu.)")
+        return "\n".join(lines)
+
     # document_type == "other" (or malformed)
-    note = extraction.notes or "The image does not appear to be a wine label or wine list."
-    return f"Document type: not a wine image.\n- {note}"
+    note = extraction.notes or "The image does not appear to be a drink label, drink list, or food menu."
+    return f"Document type: not a recognized drink/menu image.\n- {note}"
 
 
 # ── Offline smoke test (no LLM / credentials) ────────────────────────
