@@ -1,6 +1,6 @@
 # Vancouver Drinks AI
 
-밴쿠버 주류 시장을 위한 멀티 에이전트 AI 음료 컨시어지. LangGraph Supervisor + 3 specialist 에이전트 아키텍처로, 6개 밴쿠버 주류 매장의 실시간 재고/가격을 통합 검색하고, Google Search grounding 기반 전문가 지식과 푸드 페어링을 제공한다. B2C (소비자 추천) + B2B (식음업체 음료 메뉴 설계) 모두 지원.
+밴쿠버 주류 시장을 위한 멀티 에이전트 AI 음료 컨시어지. LangGraph Supervisor + 3 specialist 에이전트 아키텍처로, 밴쿠버 6개 주류 소매 체인(BC Liquor Stores 200+ 지점, Everything Wine 4개 지점 포함)의 실시간 재고/가격을 통합 검색하고, Google Search grounding 기반 전문가 지식과 푸드 페어링을 제공한다. B2C (소비자 추천) + B2B (식음업체 음료 메뉴 설계) 모두 지원.
 
 **Live: [wineaiagent.com](https://wineaiagent.com)**
 
@@ -35,7 +35,7 @@ LangGraph Supervisor (agent.py — Gemini 3.5 Flash)
     │   ┌─────────────────────────────────────────────────────────────┐
     │   │  Specialist Agents (독립 ReAct sub-graph)                    │
     │   │                                                             │
-    │   │  Sourcing Agent ──── 6개 매장 병렬 검색 (가격/재고/구매처)     │
+    │   │  Sourcing Agent ──── 6개 소매 체인 병렬 검색 (가격/재고/구매처) │
     │   │    └─ bcliquor, everythingwine, okanagan_cellars,           │
     │   │       suttonplace, marquis, legacy                          │
     │   │                                                             │
@@ -60,7 +60,7 @@ Supervisor + 3 specialist 패턴. 각 specialist는 독립 ReAct sub-graph로, S
 | Agent | 역할 | 사용 Tool | 모델 |
 |-------|------|-----------|------|
 | **Supervisor** | 쿼리 라우팅, specialist 조율, 최종 답변 합성, clarification/preferences 직접 소유 | ask_user_clarification, update_preferences + 3 specialist tools | Gemini 3.5 Flash |
-| **Sourcing Agent** | 재고, 가격, 구매처 검색 — 매번 6개 매장 병렬 호출 | 6개 store tools | Gemini 3.5 Flash |
+| **Sourcing Agent** | 재고, 가격, 구매처 검색 — 매번 6개 소매 체인 병렬 호출 | 6개 retailer tools | Gemini 3.5 Flash |
 | **Sommelier Agent** | 페어링 추천, 음료 지식, 리뷰/점수 (Google grounding 기반, 인용 포함) | reasoning_pair_wine, search_web_grounded | Gemini 3.1 Pro Preview |
 | **Menu Architect** | (B2B) 음식 메뉴에서 음료 메뉴 설계 → 실제 상품/가격 소싱 (A2A 위임) | sourcing_agent (A2A), search_web_grounded | Gemini 3.1 Pro Preview |
 
@@ -282,7 +282,7 @@ BC-wine-ai-agents/
 ├── agents/                     # Specialist 에이전트 (독립 ReAct sub-graph)
 │   ├── __init__.py             # 아키텍처 문서
 │   ├── react_subagent.py       # 공유 ReAct sub-graph 빌더 + run_subagent_json 래퍼
-│   ├── sourcing_agent.py       # Sourcing Agent — 6개 매장 병렬 검색
+│   ├── sourcing_agent.py       # Sourcing Agent — 6개 소매 체인 병렬 검색
 │   ├── sommelier_agent.py      # Sommelier Agent — 페어링 + grounding
 │   └── menu_architect.py       # Menu Architect — B2B 음료 메뉴 설계 (A2A)
 ├── tools/                      # 데이터 수집 도구 모음
