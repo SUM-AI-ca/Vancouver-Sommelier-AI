@@ -562,4 +562,5 @@ async def health():
     return {"ok": True}
 
 
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+if os.path.isdir("frontend"):
+    app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
