@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecture Diagram — Vancouver Sommelier AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .diagram-page {
+            flex: 1;
+            background: var(--background-secondary);
+            padding: 2rem 0 3rem;
+        }
+        .diagram-back {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            color: var(--primary);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            transition: color 0.15s;
+        }
+        .diagram-back:hover {
+            color: var(--primary-hover);
+        }
+        .diagram-back svg {
+            width: 16px;
+            height: 16px;
+        }
+        .diagram-heading {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.4px;
+            margin-bottom: 0.5rem;
+        }
+        .diagram-description {
+            font-size: 0.95rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 2rem;
+            max-width: 640px;
+        }
+        .diagram-frame {
+            background: var(--background);
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            padding: 1.5rem;
+            overflow-x: auto;
+        }
+        .diagram-frame a {
+            display: block;
+        }
+        .diagram-frame img {
+            display: block;
+            width: 100%;
+            max-width: 1200px;
+            height: auto;
+            margin: 0 auto;
+            cursor: pointer;
+        }
+        .diagram-hint {
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            margin-top: 0.75rem;
+        }
+    </style>
+</head>
+<body>
+
+<header class="site-header">
+    <div class="container">
+        <a href="/" style="text-decoration:none"><span class="brand">Vancouver Sommelier AI</span></a>
+    </div>
+</header>
+
+<main class="diagram-page">
+    <div class="container">
+        <a href="/" class="diagram-back">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Back to home
+        </a>
+        <h1 class="diagram-heading">Architecture Diagram</h1>
+        <p class="diagram-description">
+            Multi-agent system flow showing the validation pipeline, supervisor orchestration, specialized sub-agents, and tool integrations.
+        </p>
+        <div class="diagram-frame">
+            <a href="images/architecture-diagram.png" target="_blank">
+                <img src="images/architecture-diagram.png"
+                     alt="Architecture diagram showing the Vancouver Sommelier AI multi-agent system flow."
+                     loading="lazy">
+            </a>
+        </div>
+        <p class="diagram-hint">Click image to open full size in a new tab</p>
+    </div>
+</main>
+
+</body>
+</html>
