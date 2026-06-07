@@ -1,4 +1,4 @@
-/* Vancouver Drinks AI — SSE chat client */
+/* Vancouver Sommelier AI — SSE chat client */
 
 const API_BASE = "";
 
@@ -491,6 +491,9 @@ async function sendMessage() {
   let tokenBuf = "";
   let currentRunId = null;
 
+  const abortCtrl = new AbortController();
+  const timeoutId = setTimeout(() => abortCtrl.abort(), 180_000);
+
   try {
     async function doChat() {
       const cfToken = await getTurnstileToken();
@@ -503,12 +506,26 @@ async function sendMessage() {
           images: images.length ? images : undefined,
           cf_turnstile_token: cfToken,
         }),
+        signal: abortCtrl.signal,
       });
     }
 
     let res = await doChat();
     if (res.status === 403) {
       res = await doChat();
+    }
+
+    if (!res.ok) {
+      const errText = res.status === 429
+        ? "Too many requests — please wait a moment and try again."
+        : `Server error (${res.status}). Please try again.`;
+      addMessage("ai", `<em>${escapeHtml(errText)}</em>`);
+      setStatus("Error", false);
+      clearTimeout(timeoutId);
+      sending = false;
+      sendBtn.disabled = false;
+      inputEl.focus();
+      return;
     }
 
     const reader = res.body.getReader();
@@ -580,6 +597,14 @@ async function sendMessage() {
             break;
 
           case "clarification_request":
+            // The orchestrator round that called clarification may have
+            // streamed partial tokens — clean them up before showing the
+            // clarification UI.
+            if (aiDiv) {
+              aiDiv.remove();
+              aiDiv = null;
+              tokenBuf = "";
+            }
             // Disable any in-flight prior clarification chips so only the
             // most recent question is actionable.
             messagesEl.querySelectorAll(".clarification.active").forEach((el) => {
@@ -606,8 +631,19 @@ async function sendMessage() {
       }
     }
   } catch (err) {
-    addMessage("ai", `<em>Connection error. Please try again.</em>`);
+    const msg = abortCtrl.signal.aborted
+      ? "Request timed out. Please try again."
+      : "Connection error. Please try again.";
+    addMessage("ai", `<em>${msg}</em>`);
     setStatus("Error", false);
+  } finally {
+    clearTimeout(timeoutId);
+    // Safety net: if the stream ended without a "done" event (e.g. the
+    // backend crashed mid-stream), ensure the spinner stops.
+    if (statusEl.classList.contains("is-working")) {
+      markRemainingBadgesDone();
+      setStatus("Ready", false);
+    }
   }
 
   sending = false;
@@ -653,7 +689,7 @@ function saveAsPdf() {
     lines.push(`<div class="pdf-msg ${isUser ? "pdf-user" : "pdf-ai"}"><span class="pdf-role">${role}</span>${el.innerHTML}</div>`);
   });
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Vancouver Drinks AI — Conversation</title>
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Vancouver Sommelier AI — Conversation</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#2A1F22;padding:2rem;max-width:800px;margin:0 auto;line-height:1.6}
@@ -675,7 +711,7 @@ h1{font-size:1.3rem;font-weight:700;color:#7A3D4F;margin-bottom:0.25rem}
 .chat-msg-thumb{width:auto;height:auto;max-width:220px;max-height:220px;object-fit:contain;border-radius:6px;border:1px solid #ECDFE0}
 .pdf-msg img{max-width:100%;height:auto}
 </style></head><body>
-<h1>Vancouver Drinks AI</h1>
+<h1>Vancouver Sommelier AI</h1>
 <div class="pdf-date">${new Date().toLocaleDateString("en-CA", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
 ${lines.join("\n")}
 </body></html>`;

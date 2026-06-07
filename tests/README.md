@@ -7,15 +7,9 @@ Golden-query eval pipeline for Vancouver Drinks AI. Run on your own machine.
 For each query in `golden_queries.py`:
 
 1. Invokes the LangGraph (`agent.get_graph().ainvoke`) on a fresh thread.
-2. Captures the resulting `state` — messages, `tool_call_log`.
-3. Runs **deterministic metrics** (`metrics.py`):
-   - Tool orchestration (precision / recall / F1, forbidden-call check, per-turn limit check)
-   - Hallucination check against raw tool output
-   - Coverage (distinct stores / critics cited)
-   - Output-contract score (Lead / Why / Where-to-buy / Pairing skeleton)
-   - Multi-turn reference resolution + preferences-active checks
-4. (Optional) **LLM-as-judge** (`judge.py`) — Gemini 3.5 Flash, temp=0, rubric scores 1–5 for accuracy / citation / completeness / style / helpfulness / structure / overall.
-5. Writes a per-query transcript (`transcripts/<id>.md`), the full `results.json`, and a Claude-readable `summary.md` with TL;DR.
+2. Captures the resulting `state` — messages, tool calls, `wine_context`.
+3. **LLM-as-Judge** (`judge.py`) — Gemini 3.1 Pro Preview, temp=0, scores 1–5 on: relevance / correctness / helpfulness / coherence / harmlessness / overall. Also extracts 1–4 issue bullets and 0–2 strength bullets.
+4. Writes a per-query transcript (`transcripts/<id>.md`), the full `results.json`, and a Claude-readable `summary.md` with TL;DR.
 
 Output lands in `tests/results/<YYYYMMDD-HHMMSS>/` (gitignored).
 
@@ -36,23 +30,20 @@ All commands from the **project root** (not `tests/`):
 # See what's available, group by category, no LLM calls
 python -m tests.quality_eval --list
 
-# Quickest sanity check — 2 queries, no judge (~1-2 min)
-python -m tests.quality_eval --dry-run --skip-judge
+# Quickest sanity check — 2 queries (~2 min)
+python -m tests.quality_eval --dry-run
 
 # One specific query (fast feedback loop on a single regression)
 python -m tests.quality_eval --id INV-001
 
-# Category subset (INV = inventory/fan-out, CRI = critic, PAIR-* = pairings,
+# Category subset (INV = inventory, CRI = critic, PAIR-* = pairings,
 # MT-REF / MT-PREF = multi-turn, OFF = off-topic, etc.)
 python -m tests.quality_eval --only INV,CRI
 
-# First N queries after filters (helpful with --only for incremental testing)
+# First N queries after filters
 python -m tests.quality_eval --only PAIR-W --limit 2
 
-# Deterministic-only sweep across the whole suite (~10-12 min, no judge cost)
-python -m tests.quality_eval --skip-judge
-
-# Full suite with judge (~25-30 min)
+# Full suite (~25-30 min)
 python -m tests.quality_eval
 ```
 
@@ -65,53 +56,53 @@ tests/results/20260526-184500/
 ├── results.json            # full structured data (load with json.load)
 ├── summary.md              # human-readable; start here
 └── transcripts/
-    ├── INV-001.md          # per-query: tool calls, response, metrics, judge
+    ├── INV-001.md          # per-query: tool calls, response, judge scores
     ├── CRI-001.md
     └── …
 ```
 
 `summary.md` order:
 
-1. **TL;DR — Top Issues for Next Session** — auto-derived list of code targets (e.g. "Output contract avg 1.8/4 — synthesis prompt skeleton not enforced").
-2. **Aggregate Metrics** — orchestration F1, hallucination rate, judge scores, latency, coverage, structure score.
-3. **Per-Category Breakdown** — pass-rate + judge overall per `INV`/`CRI`/`PAIR-*`/etc.
-4. **Suspected Hallucinations** — flagged tokens with the originating query ID for code review.
-5. **Per-Query Detail** — one row per turn, with pass/fail flags + judge overall.
-6. **Suggested Code Targets** — file:line pointers for likely root causes.
-
-Iteration history lives in `docs/AGENT_DESIGN.md` §16.5.
+1. **TL;DR — Top Issues for Next Session** — auto-derived from low judge dimension averages.
+2. **Judge Scores** — per-dimension averages (relevance, correctness, helpfulness, coherence, harmlessness, overall).
+3. **Latency** — avg, median, p95, max.
+4. **Per-Category Breakdown** — judge overall average per category.
+5. **Per-Query Detail** — one row per turn with all 6 judge dimensions + issue summary.
+6. **Suggested Code Targets** — file pointers for likely root causes of low scores.
 
 ## Categories (golden_queries.py)
 
 | Code | Meaning |
 |---|---|
-| `INV` | Inventory / "where can I buy" — must parallel-fan-out 4 store tools |
-| `CRI` | Critic reviews — must cite by critic name + source |
-| `PAIR-W` | Western pairing — answer from built-in knowledge |
-| `PAIR-C` | Complex pairing — may invoke `reasoning_pair_wine` |
-| `PAIR-N` | Non-Western pairing — web grounding allowed |
+| `INV` | Inventory / "where can I buy" |
+| `CRI` | Critic reviews via grounding |
+| `PAIR-W` | Western pairing — built-in knowledge |
+| `PAIR-C` | Complex pairing — reasoning depth |
+| `PAIR-N` | Non-Western pairing — cultural awareness |
 | `EDU` | Regional / educational |
 | `DISC` | Open-ended discovery |
 | `BEG` | Beginner-tier — friendly, jargon-light |
-| `SOM` | Sommelier-tier — full critic detail |
+| `SOM` | Sommelier-tier — technical depth |
+| `B2B` | Beverage-menu design for F&B |
+| `ML` | Multilingual (Chinese, Japanese) |
 | `MT-REF` | Multi-turn reference resolution ("the second one") |
 | `MT-PREF` | Multi-turn preference inference |
 | `FB` | Fallback — wine not in stock anywhere |
-| `OFF` | Off-topic — should be intercepted by `validation.py` gate |
+| `OFF` | Off-topic / prompt injection — should refuse |
 
 ## Common workflows
 
-**"Did my prompt/code change regress anything?"** — run `--skip-judge` first for a fast deterministic sweep, then run full suite if structure / hallucination / orchestration metrics look clean.
+**"Did my prompt/code change regress anything?"** — run `--dry-run` or `--only INV,CRI` for a quick spot check, then full suite if those look clean.
 
-**"Why did one query fail?"** — open `transcripts/<id>.md`. Tool I/O, final response, and all metrics are there.
+**"Why did one query score low?"** — open `transcripts/<id>.md`. Tool calls, final response, and full judge output (scores + issues + strengths) are there.
 
 **"I want to compare runs."** — both runs live in `tests/results/<timestamp>/`. Diff their `summary.md` files (or load both `results.json` and diff the `aggregate` blocks).
 
 ## Files
 
 - `quality_eval.py` — the runner. CLI + per-query loop + aggregation + summary rendering.
-- `metrics.py` — pure-Python deterministic checks (no LLM).
+- `metrics.py` — content extraction helpers (no scoring logic).
 - `judge.py` — single LLM call per turn with the rubric.
-- `golden_queries.py` — golden queries across multiple categories. Each entry sets `expected_tools_all_of` / `forbidden_tools` / `must_mention` / `min_distinct_stores_cited` / `hallucination_check_fields` / `max_latency_s`.
+- `golden_queries.py` — 29 golden queries across 16 categories. Each entry has `judge_focus` to weight specific dimensions.
 - `__init__.py` — empty; just makes `tests` a package.
 - `results/` — gitignored output directory.

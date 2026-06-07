@@ -1,4 +1,4 @@
-"""Main runner for Vancouver Drinks AI quality eval.
+"""Main runner for Vancouver Drinks AI quality eval (LLM-as-Judge only).
 
 Run from the project root:
 
@@ -6,7 +6,6 @@ Run from the project root:
     python -m tests.quality_eval --only INV,CRI           # category filter
     python -m tests.quality_eval --id INV-001             # single query
     python -m tests.quality_eval --dry-run                # first 2 queries only
-    python -m tests.quality_eval --skip-judge             # deterministic only
     python -m tests.quality_eval --limit 5                # first N queries
     python -m tests.quality_eval --list                   # print all queries, exit
     python -m tests.quality_eval --skip-preflight         # skip credential checks
@@ -20,8 +19,7 @@ Ctrl-C is handled gracefully — partial results are written before exit so
 nothing is lost on a long run.
 
 The flow is:
-  golden query → graph.ainvoke → capture state → deterministic metrics
-                                              → LLM-as-judge (optional)
+  golden query → graph.ainvoke → capture state → LLM-as-Judge scoring
                                               → write transcript + result entry
 After all queries: aggregate → summary.md.
 """
@@ -54,21 +52,10 @@ from agent import get_graph  # noqa: E402
 from tests.golden_queries import GOLDEN_QUERIES, total_invocations  # noqa: E402
 from tests.judge import judge_response  # noqa: E402
 from tests.metrics import (  # noqa: E402
-    collect_tool_results_text,
-    collect_wine_context_text,
-    count_distinct_critics_cited,
-    count_distinct_stores_cited,
     extract_final_response,
     extract_tool_call_records,
     extract_tool_messages,
-    hallucination_check,
-    markdown_link_count,
-    mention_check,
-    output_contract_score,
-    preferences_active_check,
-    reference_resolution_check,
     summarize_tool_results,
-    tool_orchestration_metrics,
 )
 
 
@@ -107,19 +94,17 @@ async def invoke_turn(
 
 
 # =====================================================================
-# Metric assembly for a single turn
+# Per-turn evaluation (LLM-as-Judge only)
 # =====================================================================
 
 async def evaluate_turn(
     turn_expected: dict,
     full_state: dict,
     new_msgs: list,
-    prev_state: dict | None,
     latency_s: float,
     error_str: str,
-    skip_judge: bool,
 ) -> dict:
-    """Compute all metrics for one turn. Returns a turn-result dict."""
+    """Score one turn via LLM-as-Judge. Returns a turn-result dict."""
     if error_str:
         return {
             "query": turn_expected.get("query", ""),
@@ -127,81 +112,22 @@ async def evaluate_turn(
             "error": error_str,
             "tool_calls": [],
             "final_response": "",
-            "metrics": {},
             "judge": None,
-            "pass_summary": {"agent_completed": False},
         }
 
     scoped_state = {**full_state, "messages": new_msgs}
 
     tool_call_records = extract_tool_call_records(scoped_state)
     tool_messages = extract_tool_messages(scoped_state)
-    # Build the supporting-text blob from BOTH the (post-compaction) ToolMessages
-    # AND wine_context — compaction projects each ToolMessage down to top-N rows,
-    # so facts the synthesizer drew from cumulative wine_context would otherwise
-    # be falsely flagged as unsupported.
-    tool_results_blob = collect_tool_results_text(tool_messages)
-    wine_ctx_blob = collect_wine_context_text(full_state)
-    support_blob = tool_results_blob + "\n" + wine_ctx_blob
     final_response = extract_final_response(scoped_state)
 
-    orch = tool_orchestration_metrics(tool_call_records, turn_expected)
-    hallu = hallucination_check(
-        final_response,
-        support_blob,
-        turn_expected.get("hallucination_check_fields", []) or [],
+    tr_summary = summarize_tool_results(tool_messages)
+    judge_scores = await judge_response(
+        user_query=turn_expected.get("query", ""),
+        tool_results_summary=tr_summary,
+        final_response=final_response,
+        judge_focus=turn_expected.get("judge_focus"),
     )
-    stores_n, stores_hit = count_distinct_stores_cited(final_response)
-    critics_n, critics_hit = count_distinct_critics_cited(final_response)
-    n_links = markdown_link_count(final_response)
-    contract = output_contract_score(final_response)
-    mention = mention_check(
-        final_response,
-        turn_expected.get("must_mention", []) or [],
-        turn_expected.get("must_not_mention", []) or [],
-    )
-
-    ref_resolution = None
-    if turn_expected.get("must_reference_cached_wine") and prev_state is not None:
-        ref_resolution = reference_resolution_check(full_state, prev_state, final_response)
-
-    prefs_check = None
-    if turn_expected.get("preferences_should_be_active"):
-        prefs_check = preferences_active_check(
-            full_state, turn_expected["preferences_should_be_active"]
-        )
-
-    judge_scores: dict | None = None
-    if not skip_judge:
-        tr_summary = summarize_tool_results(
-            tool_messages,
-            max_chars=6000,
-            wine_context=full_state.get("wine_context") if isinstance(full_state, dict) else None,
-        )
-        judge_scores = await judge_response(
-            user_query=turn_expected.get("query", ""),
-            tool_results_summary=tr_summary,
-            final_response=final_response,
-            judge_focus=turn_expected.get("judge_focus"),
-        )
-
-    min_stores = int(turn_expected.get("min_distinct_stores_cited", 0) or 0)
-    min_critics = int(turn_expected.get("min_distinct_critics_cited", 0) or 0)
-    require_link = bool(turn_expected.get("require_markdown_link", False))
-    pass_summary = {
-        "agent_completed": True,
-        "orchestration": orch["pass"],
-        "hallucination": hallu["pass"],
-        "mention": mention["pass"],
-        "coverage_stores": stores_n >= min_stores,
-        "coverage_critics": critics_n >= min_critics,
-        "link_inclusion": (n_links >= 1) if require_link else True,
-        "structure_min": contract["score_of_4"] >= 1,
-    }
-    if ref_resolution is not None:
-        pass_summary["reference_resolution"] = ref_resolution["any_referenced"]
-    if prefs_check is not None:
-        pass_summary["preferences_active"] = prefs_check["pass"]
 
     return {
         "query": turn_expected.get("query", ""),
@@ -210,19 +136,7 @@ async def evaluate_turn(
         "tool_calls": tool_call_records,
         "tool_messages_count": len(tool_messages),
         "final_response": final_response,
-        "metrics": {
-            "orchestration": orch,
-            "hallucination": hallu,
-            "stores_cited": {"count": stores_n, "stores": stores_hit, "required_min": min_stores},
-            "critics_cited": {"count": critics_n, "critics": critics_hit, "required_min": min_critics},
-            "markdown_links": n_links,
-            "output_contract": contract,
-            "mention": mention,
-            "reference_resolution": ref_resolution,
-            "preferences_active": prefs_check,
-        },
         "judge": judge_scores,
-        "pass_summary": pass_summary,
     }
 
 
@@ -230,7 +144,7 @@ async def evaluate_turn(
 # Per-query runner (single + multi-turn)
 # =====================================================================
 
-async def run_query(graph, entry: dict, skip_judge: bool, console_prefix: str = "") -> dict:
+async def run_query(graph, entry: dict, console_prefix: str = "") -> dict:
     is_multi = "turns" in entry
     eval_id = entry["id"]
     thread_id = f"eval-{eval_id}-{uuid4().hex[:8]}"
@@ -238,7 +152,6 @@ async def run_query(graph, entry: dict, skip_judge: bool, console_prefix: str = 
     print(f"{console_prefix}▶ {eval_id} ({entry['category']})  thread={thread_id[:18]}…", flush=True)
 
     turn_results: list[dict] = []
-    prev_state: dict | None = None
     prev_msg_count = 0
 
     if is_multi:
@@ -246,24 +159,18 @@ async def run_query(graph, entry: dict, skip_judge: bool, console_prefix: str = 
             full_state, new_msgs, latency, err = await invoke_turn(
                 graph, thread_id, turn_expected["query"], eval_id, prev_msg_count
             )
-            r = await evaluate_turn(
-                turn_expected, full_state, new_msgs, prev_state, latency, err, skip_judge
-            )
+            r = await evaluate_turn(turn_expected, full_state, new_msgs, latency, err)
             r["turn_index"] = i
             turn_results.append(r)
             _print_turn_summary(console_prefix + "    ", i, r)
 
-            # Always advance prev_msg_count when the checkpointer has any state,
-            # so a partial-error turn doesn't pollute the next turn's slicing.
             if isinstance(full_state, dict) and full_state.get("messages"):
                 prev_msg_count = len(full_state["messages"])
-            if not err:
-                prev_state = full_state
     else:
         full_state, new_msgs, latency, err = await invoke_turn(
             graph, thread_id, entry["query"], eval_id, 0
         )
-        r = await evaluate_turn(entry, full_state, new_msgs, None, latency, err, skip_judge)
+        r = await evaluate_turn(entry, full_state, new_msgs, latency, err)
         r["turn_index"] = 0
         turn_results.append(r)
         _print_turn_summary(console_prefix + "  ", 0, r)
@@ -282,10 +189,6 @@ def _print_turn_summary(prefix: str, idx: int, r: dict) -> None:
     if r.get("error"):
         print(f"{prefix}T{idx} ✗ ERROR ({r['error'].splitlines()[0][:80]})", flush=True)
         return
-    ps = r["pass_summary"]
-    flags = []
-    for k, v in ps.items():
-        flags.append(f"{k}={'✓' if v else '✗'}")
     judge = r.get("judge") or {}
     j_overall = judge.get("overall", "-")
     tools = [tc["name"] for tc in r.get("tool_calls", [])]
@@ -293,9 +196,12 @@ def _print_turn_summary(prefix: str, idx: int, r: dict) -> None:
         f"{prefix}T{idx}  {r['latency_s']:>5.1f}s  judge={j_overall}/5  tools={tools[:6]}",
         flush=True,
     )
-    fails = [k for k, v in ps.items() if not v]
-    if fails:
-        print(f"{prefix}      fails: {', '.join(fails)}", flush=True)
+    low_dims = [
+        f"{k}={judge[k]}" for k in ("relevance", "correctness", "helpfulness", "coherence", "harmlessness")
+        if isinstance(judge.get(k), int) and judge[k] < 3
+    ]
+    if low_dims:
+        print(f"{prefix}      low: {', '.join(low_dims)}", flush=True)
 
 
 # =====================================================================
@@ -339,109 +245,55 @@ def aggregate(results: list[dict]) -> dict:
     else:
         latency_stats = {"avg": None, "median": None, "p95": None, "max": None}
 
-    orch_pass_n = sum(1 for t in completed if t["metrics"]["orchestration"]["pass"])
-    forbidden_violations = sum(
-        1 for t in completed if t["metrics"]["orchestration"]["forbidden_called"]
-    )
-    limit_violations = sum(
-        1 for t in completed if t["metrics"]["orchestration"]["limit_violations"]
-    )
-    precision_avg = round(mean([t["metrics"]["orchestration"]["precision"] for t in completed]), 3) if completed else None
-    recall_avg = round(mean([t["metrics"]["orchestration"]["recall"] for t in completed]), 3) if completed else None
-    f1_avg = round(mean([t["metrics"]["orchestration"]["f1"] for t in completed]), 3) if completed else None
-
-    n_with_unsupported = sum(1 for t in completed if t["metrics"]["hallucination"]["total_unsupported"] > 0)
-    total_unsupported_tokens = sum(t["metrics"]["hallucination"]["total_unsupported"] for t in completed)
-
-    n_with_link = sum(1 for t in completed if t["metrics"]["markdown_links"] >= 1)
-
-    stores_in_buyability = [
-        t["metrics"]["stores_cited"]["count"]
-        for t in completed
-        if t["metrics"]["stores_cited"]["required_min"] >= 1
-    ]
-    critics_in_review = [
-        t["metrics"]["critics_cited"]["count"]
-        for t in completed
-        if t["metrics"]["critics_cited"]["required_min"] >= 1
-    ]
-
-    structure_scores = [t["metrics"]["output_contract"]["score_of_4"] for t in completed]
-    structure_avg = round(mean(structure_scores), 2) if structure_scores else None
-
     # Per-category breakdown
     by_cat: dict[str, dict] = {}
     for t in turns:
         cat = t["category"]
-        bc = by_cat.setdefault(cat, {"n_turns": 0, "n_passed_all": 0, "judge_overall": []})
+        bc = by_cat.setdefault(cat, {"n_turns": 0, "n_completed": 0, "judge_overall": []})
         bc["n_turns"] += 1
         if t.get("error"):
             continue
-        ps = t["pass_summary"]
-        if all(ps.values()):
-            bc["n_passed_all"] += 1
+        bc["n_completed"] += 1
         j = t.get("judge") or {}
         if isinstance(j.get("overall"), int) and j["overall"] > 0:
             bc["judge_overall"].append(j["overall"])
     for cat, bc in by_cat.items():
         bc["judge_overall_avg"] = round(mean(bc["judge_overall"]), 2) if bc["judge_overall"] else None
-        bc["pass_rate"] = round(bc["n_passed_all"] / bc["n_turns"], 2) if bc["n_turns"] else 0
         del bc["judge_overall"]
 
-    # Suspected hallucinations (collected for the round-trip Claude analysis)
-    suspected_hallucinations = []
+    # Collect judge issues across all turns
+    all_issues: list[dict] = []
     for t in completed:
-        h = t["metrics"]["hallucination"]
-        if h["total_unsupported"] > 0:
-            suspected_hallucinations.append({
+        j = t.get("judge") or {}
+        issues = j.get("issues", [])
+        if issues:
+            all_issues.append({
                 "id": t["id"],
                 "category": t["category"],
                 "turn_index": t.get("turn_index", 0),
-                "unsupported": h["unsupported"],
                 "query": t["query"],
+                "overall": j.get("overall", 0),
+                "issues": issues,
             })
 
     # Top issues — automated TL;DR for the next-session Claude
     top_issues: list[str] = []
-    if structure_avg is not None and structure_avg < 2.5:
-        below = sum(1 for s in structure_scores if s < 2)
+    for dim in ("relevance", "correctness", "helpfulness", "coherence", "harmlessness"):
+        avg = judge_avg.get(dim)
+        if avg is not None and avg < 3.5:
+            guidance = {
+                "relevance": "응답이 질문과 관련 없는 내용을 포함하거나 핵심을 벗어남. orchestrator 프롬프트에서 질문 재확인 단계 강화 필요.",
+                "correctness": "사실 정확도가 낮음. `prompts.py` 'Never invent' 규칙 강화 및 tool 결과 외 주장 금지 검토.",
+                "helpfulness": "응답의 실행 가능성(actionability) 부족. 구체적인 제품, 가격, 구매처 포함 유도 필요.",
+                "coherence": "응답 내 논리적 일관성 부족. 응답 구조화 또는 synthesis 단계 개선 필요.",
+                "harmlessness": "부적절한 음주 권장 또는 비전문적 톤 감지. 프롬프트 안전 규칙 강화 필요.",
+            }
+            top_issues.append(f"**Judge '{dim}' 평균 {avg}/5** — {guidance[dim]}")
+
+    n_low = sum(1 for t in completed if (t.get("judge") or {}).get("overall", 5) < 3)
+    if n_low:
         top_issues.append(
-            f"**Output structure 평균 {structure_avg}/4** — {below}/{len(structure_scores)} 응답이 마크다운 skeleton(Lead/Why/Where-to-buy 표/Pairing)을 부분 이상 미충족. "
-            "`agent.py:273` `format_response_node` 가 no-op 인 게 원인일 가능성 — synthesis LLM call 활성화 검토."
-        )
-    if n_with_unsupported:
-        top_issues.append(
-            f"**Hallucination 의심 {n_with_unsupported}/{len(completed)} 응답** (총 unsupported 토큰 {total_unsupported_tokens}건). "
-            "`prompts.py` Behavioral Rule 2 ('Never invent') 가 약하게 작동. 아래 Suspected Hallucinations 섹션 참조."
-        )
-    link_rate = n_with_link / len(completed) if completed else 0
-    if link_rate < 0.5:
-        top_issues.append(
-            f"**Markdown 링크 포함률 {round(link_rate*100)}%** — `prompts.py` Behavioral Rule 11 (\"Always include links\") 가 거의 무시됨. "
-            "프롬프트에서 우선순위를 더 명확히 하거나 합성 단계에서 강제 검증 필요."
-        )
-    if forbidden_violations:
-        top_issues.append(
-            f"**Forbidden tool 호출 {forbidden_violations}건** — 금지된 툴 호출 발생. `prompts.py` 의 'when to call' 트리거 어휘 강화 또는 negative example 추가 검토."
-        )
-    if limit_violations:
-        top_issues.append(
-            f"**Per-turn 호출 한도 초과 {limit_violations}건** — search_web_grounded(≤1) 초과. `prompts.py` 의 한도 문구를 더 강하게 표현 필요."
-        )
-    judge_relevance = judge_avg.get("relevance")
-    if judge_relevance is not None and judge_relevance < 3.5:
-        top_issues.append(
-            f"**Judge 'relevance' 평균 {judge_relevance}/5** — 응답이 질문과 관련 없는 내용을 포함하거나 핵심을 벗어남. orchestrator 프롬프트에서 질문 재확인 단계 강화 필요."
-        )
-    judge_correctness = judge_avg.get("correctness")
-    if judge_correctness is not None and judge_correctness < 3.5:
-        top_issues.append(
-            f"**Judge 'correctness' 평균 {judge_correctness}/5** — 사실 정확도가 낮음. `prompts.py` Behavioral Rule 2 ('Never invent') 강화 또는 tool 결과 외 주장 금지 규칙 추가 필요."
-        )
-    judge_coherence = judge_avg.get("coherence")
-    if judge_coherence is not None and judge_coherence < 3.5:
-        top_issues.append(
-            f"**Judge 'coherence' 평균 {judge_coherence}/5** — 응답 내 논리적 일관성 부족. 응답 구조화 또는 synthesis 단계 개선 필요."
+            f"**Overall < 3 응답 {n_low}/{len(completed)}건** — 아래 Per-Query Detail에서 개별 이슈 확인 필요."
         )
 
     return {
@@ -452,30 +304,8 @@ def aggregate(results: list[dict]) -> dict:
         "judge_avg": judge_avg,
         "judge_n": judge_n,
         "latency": latency_stats,
-        "orchestration": {
-            "pass_rate": round(orch_pass_n / len(completed), 3) if completed else None,
-            "precision_avg": precision_avg,
-            "recall_avg": recall_avg,
-            "f1_avg": f1_avg,
-            "forbidden_violations_count": forbidden_violations,
-            "limit_violations_count": limit_violations,
-        },
-        "hallucination": {
-            "responses_with_unsupported": n_with_unsupported,
-            "total_unsupported_tokens": total_unsupported_tokens,
-            "rate": round(n_with_unsupported / len(completed), 3) if completed else None,
-        },
-        "coverage": {
-            "avg_stores_when_buyability": round(mean(stores_in_buyability), 2) if stores_in_buyability else None,
-            "avg_critics_when_reviews": round(mean(critics_in_review), 2) if critics_in_review else None,
-            "link_inclusion_rate": round(link_rate, 3),
-        },
-        "structure_contract": {
-            "avg_score_of_4": structure_avg,
-            "distribution": {str(i): structure_scores.count(i) for i in range(5)} if structure_scores else {},
-        },
         "by_category": by_cat,
-        "suspected_hallucinations": suspected_hallucinations,
+        "judge_issues": all_issues,
         "top_issues_for_next_session": top_issues,
     }
 
@@ -487,7 +317,7 @@ def aggregate(results: list[dict]) -> dict:
 def render_summary_md(meta: dict, agg: dict, results: list[dict]) -> str:
     lines: list[str] = []
     add = lines.append
-    add(f"# BC Wine AI Quality Eval — {meta['timestamp']}")
+    add(f"# Vancouver Drinks AI Quality Eval — {meta['timestamp']}")
     add("")
     add(f"- Model under test: `{meta['model']}`")
     add(f"- Judge model: `{meta['judge_model']}` (temperature=0)")
@@ -504,83 +334,57 @@ def render_summary_md(meta: dict, agg: dict, results: list[dict]) -> str:
             add(f"{i}. {issue}")
     add("")
 
-    add("## Aggregate Metrics")
+    add("## Judge Scores (LLM-as-Judge)")
     add("")
-    add("| Dimension | Value |")
-    add("|---|---|")
-    add(f"| Tool-orchestration pass rate | {agg['orchestration']['pass_rate']} |")
-    add(f"| Tool-orchestration F1 (avg) | {agg['orchestration']['f1_avg']} |")
-    add(f"| Tool-orchestration precision (avg) | {agg['orchestration']['precision_avg']} |")
-    add(f"| Tool-orchestration recall (avg) | {agg['orchestration']['recall_avg']} |")
-    add(f"| Forbidden-tool violations | {agg['orchestration']['forbidden_violations_count']} |")
-    add(f"| Per-turn limit violations | {agg['orchestration']['limit_violations_count']} |")
-    add(f"| Hallucination rate (responses) | {agg['hallucination']['rate']} |")
-    add(f"| Total unsupported tokens | {agg['hallucination']['total_unsupported_tokens']} |")
+    add("| Dimension | Average | N |")
+    add("|---|---|---|")
     j = agg["judge_avg"]
-    add(f"| Judge — relevance | {j['relevance']} |")
-    add(f"| Judge — correctness | {j['correctness']} |")
-    add(f"| Judge — helpfulness | {j['helpfulness']} |")
-    add(f"| Judge — coherence | {j['coherence']} |")
-    add(f"| Judge — harmlessness | {j['harmlessness']} |")
-    add(f"| Judge — overall | {j['overall']} |")
+    jn = agg["judge_n"]
+    for dim in ("relevance", "correctness", "helpfulness", "coherence", "harmlessness", "overall"):
+        add(f"| {dim} | {j[dim]} | {jn[dim]} |")
+    add("")
+
+    add("## Latency")
+    add("")
+    add(f"| Stat | Value |")
+    add(f"|---|---|")
     lat = agg["latency"]
-    add(f"| Latency avg | {lat['avg']}s |")
-    add(f"| Latency median | {lat['median']}s |")
-    add(f"| Latency p95 | {lat['p95']}s |")
-    add(f"| Latency max | {lat['max']}s |")
-    cov = agg["coverage"]
-    add(f"| Avg distinct stores cited (buyability) | {cov['avg_stores_when_buyability']} |")
-    add(f"| Avg distinct critics cited (review) | {cov['avg_critics_when_reviews']} |")
-    add(f"| Markdown-link inclusion rate | {cov['link_inclusion_rate']} |")
-    add(f"| Output-contract avg score | {agg['structure_contract']['avg_score_of_4']}/4 |")
+    add(f"| avg | {lat['avg']}s |")
+    add(f"| median | {lat['median']}s |")
+    add(f"| p95 | {lat['p95']}s |")
+    add(f"| max | {lat['max']}s |")
     add("")
 
     add("## Per-Category Breakdown")
     add("")
-    add("| Category | Turns | Pass-all rate | Judge overall avg |")
+    add("| Category | Turns | Completed | Judge overall avg |")
     add("|---|---|---|---|")
     for cat in sorted(agg["by_category"].keys()):
         bc = agg["by_category"][cat]
-        add(f"| {cat} | {bc['n_turns']} | {bc['pass_rate']} | {bc.get('judge_overall_avg')} |")
-    add("")
-
-    add("## Suspected Hallucinations (Need Code Review)")
-    add("")
-    if not agg["suspected_hallucinations"]:
-        add("- None flagged.")
-    else:
-        for h in agg["suspected_hallucinations"]:
-            add(f"### {h['id']} (turn {h['turn_index']}) — {h['category']}")
-            add(f"- **Query:** {h['query']}")
-            for kind, toks in h["unsupported"].items():
-                add(f"- **{kind} unsupported:** {', '.join(toks)}")
-            add(f"- See: `transcripts/{h['id']}.md`")
-            add("")
+        add(f"| {cat} | {bc['n_turns']} | {bc['n_completed']} | {bc.get('judge_overall_avg')} |")
     add("")
 
     add("## Per-Query Detail")
     add("")
-    add("| ID | Cat | Turn | Latency | Orch | Hallu | Cov-S | Cov-C | Link | Struct | Judge ovr | Notable Fail |")
-    add("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    add("| ID | Cat | Turn | Latency | Rel | Corr | Help | Coh | Harm | Ovr | Issues |")
+    add("|---|---|---|---|---|---|---|---|---|---|---|")
     for q in results:
         for t in q["turns"]:
             if t.get("error"):
-                add(f"| {q['id']} | {q['category']} | {t['turn_index']} | — | — | — | — | — | — | — | — | ERROR |")
+                add(f"| {q['id']} | {q['category']} | {t['turn_index']} | — | — | — | — | — | — | — | ERROR |")
                 continue
-            ps = t["pass_summary"]
             j = t.get("judge") or {}
-            fails = [k for k, v in ps.items() if not v]
-            short = ", ".join(fails)[:60]
+            issues_list = j.get("issues", [])
+            short = "; ".join(issues_list)[:80] if issues_list else ""
             add(
                 f"| {q['id']} | {q['category']} | {t['turn_index']} "
                 f"| {t['latency_s']}s "
-                f"| {'✓' if ps.get('orchestration') else '✗'} "
-                f"| {'✓' if ps.get('hallucination') else '✗'} "
-                f"| {t['metrics']['stores_cited']['count']}/{t['metrics']['stores_cited']['required_min']} "
-                f"| {t['metrics']['critics_cited']['count']}/{t['metrics']['critics_cited']['required_min']} "
-                f"| {t['metrics']['markdown_links']} "
-                f"| {t['metrics']['output_contract']['score_of_4']}/4 "
-                f"| {j.get('overall', '—')}/5 "
+                f"| {j.get('relevance', '—')} "
+                f"| {j.get('correctness', '—')} "
+                f"| {j.get('helpfulness', '—')} "
+                f"| {j.get('coherence', '—')} "
+                f"| {j.get('harmlessness', '—')} "
+                f"| {j.get('overall', '—')} "
                 f"| {short} |"
             )
     add("")
@@ -598,29 +402,21 @@ def render_summary_md(meta: dict, agg: dict, results: list[dict]) -> str:
     add("## Files in This Run")
     add("")
     add("- `results.json` — full structured data (machine-readable; load with `json.load`)")
-    add("- `transcripts/<ID>.md` — per-query transcripts with tool I/O + final response + metrics")
+    add("- `transcripts/<ID>.md` — per-query transcripts with tool I/O + final response + judge scores")
     return "\n".join(lines)
 
 
 def _suggest_code_targets(agg: dict) -> list[str]:
     targets = []
-    if agg["structure_contract"]["avg_score_of_4"] is not None and agg["structure_contract"]["avg_score_of_4"] < 2.5:
-        targets.append("`agent.py:273` — `format_response_node` is currently a no-op. Activate a synthesis LLM call using `SYNTHESIS_SYSTEM_PROMPT` from `prompts.py` to enforce the markdown skeleton.")
-    if agg["hallucination"]["rate"] and agg["hallucination"]["rate"] > 0.05:
-        targets.append("`prompts.py` Behavioral Rule 2 — strengthen 'Never invent' with explicit examples of what NOT to do (fabricated prices/scores).")
-    if agg["coverage"]["link_inclusion_rate"] < 0.5:
-        targets.append("`prompts.py` Behavioral Rule 11 — link inclusion is poorly followed. Move it earlier in the rules list, or add an output-format example.")
-    if agg["orchestration"]["forbidden_violations_count"]:
-        targets.append("`prompts.py` Tool Catalog — tighten 'when to call' triggers. Several forbidden tool calls observed.")
-    if agg["orchestration"]["limit_violations_count"]:
-        targets.append("`prompts.py` — per-turn call limits exceeded. Re-emphasize the '≤N per turn' constraints; consider adding a guard in `agent.py` to drop excess calls.")
     judge = agg["judge_avg"]
     if judge.get("correctness") is not None and judge["correctness"] < 3.5:
-        targets.append("`prompts.py` Behavioral Rule 2 — strengthen 'Never invent' and require all claims to be grounded in tool results.")
+        targets.append("`prompts.py` — correctness 낮음. 'Never invent' 규칙 강화 및 tool 결과 외 주장 금지 검토.")
     if judge.get("relevance") is not None and judge["relevance"] < 3.5:
-        targets.append("`prompts.py` orchestrator system prompt — add instruction to re-read the user query and confirm all parts addressed before emitting final response.")
+        targets.append("`prompts.py` — relevance 낮음. orchestrator 프롬프트에서 질문 재확인 단계 강화 필요.")
+    if judge.get("helpfulness") is not None and judge["helpfulness"] < 3.5:
+        targets.append("`prompts.py` — helpfulness 낮음. 응답의 실행 가능성(actionability) 개선 필요.")
     if judge.get("coherence") is not None and judge["coherence"] < 3.5:
-        targets.append("`prompts.py` — response coherence is low. Consider activating synthesis step or adding explicit structuring instructions.")
+        targets.append("`prompts.py` — coherence 낮음. 응답 구조화 또는 synthesis 단계 개선 필요.")
     return targets
 
 
@@ -664,28 +460,20 @@ def render_transcript_md(q: dict) -> str:
         lines.append(t["final_response"] or "(empty)")
         lines.append("```")
         lines.append("")
-        lines.append(f"### Deterministic Metrics")
-        lines.append("")
-        lines.append("```json")
-        lines.append(json.dumps(t["metrics"], indent=2, default=str))
-        lines.append("```")
-        lines.append("")
         lines.append(f"### Judge Scores")
         lines.append("")
         if t.get("judge"):
             lines.append("```json")
             j = dict(t["judge"])
-            j.pop("raw", None)  # raw can be very long
+            j.pop("raw", None)
             lines.append(json.dumps(j, indent=2, default=str))
             lines.append("```")
         else:
-            lines.append("_(judge skipped)_")
+            lines.append("_(judge error)_")
         lines.append("")
-        lines.append(f"### Pass Summary")
+        lines.append(f"### Latency")
         lines.append("")
-        for k, v in t["pass_summary"].items():
-            lines.append(f"- {k}: {'✓ PASS' if v else '✗ FAIL'}")
-        lines.append(f"- latency: {t['latency_s']}s")
+        lines.append(f"- {t['latency_s']}s")
         lines.append("")
     return "\n".join(lines)
 
@@ -716,21 +504,13 @@ def _filter_queries(
 
 
 def _preflight_check() -> list[str]:
-    """Soft check for credentials / common setup issues. Returns a list of
-    human-readable warnings — empty list means everything looks fine. Never
-    blocks; the eval still runs and individual tools degrade per their own
-    error handling.
-    """
+    """Soft check for credentials / common setup issues."""
     warnings: list[str] = []
 
-    # .env file presence
     env_path = _PROJECT_ROOT / ".env"
     if not env_path.exists():
-        warnings.append(
-            f".env file not found at {env_path}."
-        )
+        warnings.append(f".env file not found at {env_path}.")
 
-    # Vertex AI / Gemini ADC
     try:
         import google.auth  # type: ignore
         try:
@@ -791,7 +571,6 @@ async def amain(args) -> int:
             print(f"  {q['id']}  ({q['category']})", flush=True)
         return 2
 
-    # Pre-flight credential / dep check (soft — warnings only, never blocks).
     if not args.skip_preflight:
         warns = _preflight_check()
         if warns:
@@ -805,15 +584,13 @@ async def amain(args) -> int:
     (out_dir / "transcripts").mkdir(parents=True, exist_ok=True)
 
     n_invocations = sum(len(q.get("turns", [None])) for q in selected)
-    # Rough ETA: ~50s avg per invocation (with judge), ~30s without.
-    eta_per = 50.0 if not args.skip_judge else 30.0
+    eta_per = 50.0
     est_total = n_invocations * eta_per
 
     print("=" * 78, flush=True)
-    print(f"BC Wine AI Quality Eval", flush=True)
+    print(f"Vancouver Drinks AI Quality Eval (LLM-as-Judge)", flush=True)
     print(f"Output dir:    {out_dir}", flush=True)
     print(f"Selected:      {len(selected)} queries ({n_invocations} invocations)", flush=True)
-    print(f"Skip judge:    {args.skip_judge}", flush=True)
     print(f"Estimated:     ~{_format_eta(est_total)} "
           f"(at ~{eta_per:.0f}s/invocation; varies by tool latency)", flush=True)
     print("=" * 78, flush=True)
@@ -826,7 +603,6 @@ async def amain(args) -> int:
     results: list[dict] = []
     interrupted = False
     for i, entry in enumerate(selected, 1):
-        # Live ETA based on running average of completed queries.
         elapsed = time.time() - t0
         if i > 1 and results:
             avg = elapsed / (i - 1)
@@ -836,7 +612,7 @@ async def amain(args) -> int:
             eta_str = ""
         prefix = f"[{i:>2}/{len(selected)}{eta_str}] "
         try:
-            r = await run_query(graph, entry, args.skip_judge, console_prefix=prefix)
+            r = await run_query(graph, entry, console_prefix=prefix)
         except KeyboardInterrupt:
             interrupted = True
             print(f"\n⚠  Interrupted on {entry['id']} — saving partial results…", flush=True)
@@ -857,9 +633,7 @@ async def amain(args) -> int:
                     "error": f"FATAL: {type(e).__name__}: {e}\n{traceback.format_exc()}",
                     "tool_calls": [],
                     "final_response": "",
-                    "metrics": {},
                     "judge": None,
-                    "pass_summary": {"agent_completed": False},
                 }],
             }
         results.append(r)
@@ -890,7 +664,6 @@ async def amain(args) -> int:
             "id": args.id,
             "dry_run": args.dry_run,
             "limit": args.limit,
-            "skip_judge": args.skip_judge,
         },
     }
     agg = aggregate(results)
@@ -921,14 +694,14 @@ async def amain(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="BC Wine AI quality eval runner",
+        description="Vancouver Drinks AI quality eval (LLM-as-Judge)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
             "  python -m tests.quality_eval --list                  # see all queries\n"
             "  python -m tests.quality_eval --id INV-001            # one query\n"
             "  python -m tests.quality_eval --only INV,CRI          # category filter\n"
-            "  python -m tests.quality_eval --dry-run --skip-judge  # quickest sanity\n"
+            "  python -m tests.quality_eval --dry-run               # quickest sanity (2 queries)\n"
             "  python -m tests.quality_eval --limit 5               # first 5 queries\n"
             "  python -m tests.quality_eval                         # full suite (~25 min)\n"
         ),
@@ -938,14 +711,11 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Run only the first 2 queries")
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N queries after other filters")
     parser.add_argument("--list", action="store_true", help="Print all available queries (grouped by category) and exit")
-    parser.add_argument("--skip-judge", action="store_true", help="Skip LLM-as-judge calls (deterministic metrics only — much faster)")
     parser.add_argument("--skip-preflight", action="store_true", help="Skip the env/credential pre-flight check")
     args = parser.parse_args()
     try:
         return asyncio.run(amain(args))
     except KeyboardInterrupt:
-        # Shouldn't reach here normally — amain catches per-query interrupts
-        # and writes partial results. This is a last-resort fallback.
         print("\n⚠  Interrupted before any results were written.", flush=True)
         return 130
 

@@ -439,15 +439,13 @@ async def chat(req: ChatRequest, request: Request):
         else:
             inputs = {"messages": [("user", req.message)]}
 
-        # The orchestrator is the only LLM that streams (synthesis was removed).
-        # It may run several rounds per turn; the tool-calling rounds are
-        # intermediate and must not reach the user — only the FINAL round (the
-        # one with no tool_calls) is the answer. We can't tell mid-stream which
-        # round is final, so we buffer each round's tokens keyed by run_id
-        # (resetting on each new round, so only the latest survives) and flush
-        # that buffer once the graph ends with no pending clarification.
-        answer_buffer: list[str] = []
-        answer_run_id = None
+        # Stream orchestrator tokens in real-time so the user sees text
+        # immediately — especially on follow-up turns where no tools run.
+        # Each orchestrator round has a unique run_id; the frontend already
+        # handles run_id changes by clearing the previous partial answer, so
+        # intermediate tool-calling rounds are naturally replaced by the final
+        # answer round. For clarification interrupts the frontend cleans up
+        # any partial text when the clarification_request event arrives.
 
         # vision_node is a graph node (not a tool), so on_tool_* never fires for it.
         # Surface its progress to the UI via metadata.langgraph_node (robust across
@@ -522,12 +520,8 @@ async def chat(req: ChatRequest, request: Request):
                     texts = _extract_token_texts(event["data"]["chunk"])
                     if not texts:
                         continue
-                    # New run_id = new orchestrator round; drop the prior round's
-                    # buffer so only the latest (final) round is flushed below.
-                    if run_id != answer_run_id:
-                        answer_buffer = []
-                        answer_run_id = run_id
-                    answer_buffer.extend(texts)
+                    for t in texts:
+                        yield sse({"type": "token", "text": t, "run_id": run_id})
 
             # If the orchestrator paused on ask_user_clarification_tool, the
             # graph stops at an interrupt. Surface the question to the frontend
@@ -555,18 +549,11 @@ async def chat(req: ChatRequest, request: Request):
                     "question": payload.get("question", ""),
                     "options": payload.get("options") or [],
                 })
-                yield sse({"type": "done"})
-                return
-
-            # Flush the final orchestrator round — its answer. Reached only when
-            # there's no pending clarification interrupt (that path returns above).
-            if answer_buffer:
-                for t in answer_buffer:
-                    yield sse({"type": "token", "text": t, "run_id": answer_run_id})
 
             yield sse({"type": "done"})
         except Exception as e:
             yield sse({"type": "error", "message": str(e)})
+            yield sse({"type": "done"})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

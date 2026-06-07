@@ -1,10 +1,10 @@
-# Vancouver Drinks AI
+# Vancouver Sommelier AI
 
 A multi-agent AI drinks concierge for the Vancouver market. Built on a LangGraph Supervisor + 3 specialist agent architecture, it searches real-time inventory and pricing across 6 Vancouver-area retail chains (including BC Liquor Stores' 200+ locations and Everything Wine's 4 Lower Mainland stores), provides expert knowledge via Google Search grounding, and offers food pairing guidance. Supports both B2C (consumer recommendations) and B2B (beverage menu design for F&B businesses).
 
 **Live: [wineaiagent.com](https://wineaiagent.com)**
 
-Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), FastAPI SSE streaming, multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, golden-query + LLM-as-judge quality eval pipeline.
+Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), FastAPI real-time SSE token streaming, multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, request timeout + error recovery, LLM-as-judge quality eval pipeline.
 
 ---
 
@@ -48,7 +48,7 @@ LangGraph Supervisor (agent.py — Gemini 3.5 Flash)
     │
     │   supervisor final answer → END
     ↓
-SSE streaming → frontend (agent-box UI + tool badges + markdown rendering)
+Real-time SSE token streaming → frontend (agent-box UI + tool badges + markdown rendering)
 ```
 
 ---
@@ -65,6 +65,8 @@ Supervisor + 3 specialist pattern. Each specialist runs as an independent ReAct 
 | **Menu Architect** | (B2B) Design beverage menu from food menu → source real products/prices (A2A delegation) | sourcing_agent (A2A), search_web_grounded | Gemini 3.1 Pro Preview |
 
 **Agent-to-Agent (A2A)**: Menu Architect calls `sourcing_agent_tool` directly to source real Vancouver retail products and prices after designing the menu. Direct delegation without Supervisor mediation.
+
+**Multi-turn enforcement**: The Supervisor prompt enforces specialist routing on every turn — when a follow-up asks for a new product category or new recommendations ("also recommend beer", "what about spirits"), it must route to the relevant specialist rather than answering from training knowledge. The "Never invent" rule applies equally on every turn.
 
 ---
 
@@ -157,7 +159,8 @@ Implementation: `tool_error_to_json` in [`safety.py`](safety.py) + ToolNode wiri
 - **Agent box** — specialist agent results (Sourcing, Sommelier, Menu Architect) render in collapsible agent-box components showing inner tool call details and the answer in markdown.
 - **Tool badges** — each tool call renders as an expandable badge. Shows result count on completion + click for result preview dropdown.
 - **Session per chat open** — a new `thread_id` is issued each time the chat overlay opens. Follow-ups within the same overlay share memory, but closing and reopening starts fresh.
-- **Duplicate output suppression** — the server buffers tokens per `run_id` and discards previous round buffers so only the **last round without tool_calls** is flushed to the client.
+- **Real-time token streaming** — orchestrator tokens stream to the client immediately via SSE. Each orchestrator round carries a unique `run_id`; the frontend detects `run_id` changes and clears the previous partial answer, so intermediate tool-calling rounds are naturally replaced by the final answer round. On clarification interrupts, any partial text is cleaned up before the clarification UI appears.
+- **Request timeout + error recovery** — 180-second `AbortController` timeout prevents infinite spinner on backend hangs. Non-200 responses (429 rate limit, 5xx errors) are caught before SSE parsing with user-facing error messages. A `finally` safety net resets the spinner if the stream ends without a `done` event. The backend also emits `done` after `error` events for protocol completeness.
 - **Links open in new tab** — all `<a>` tags from `marked.parse` get `target="_blank" rel="noopener noreferrer"` injected automatically.
 
 Detailed architecture design is documented in [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md).
@@ -433,7 +436,6 @@ python -m tests.quality_eval                    # full suite
 python -m tests.quality_eval --only INV,CRI     # category filter
 python -m tests.quality_eval --id INV-001       # single query
 python -m tests.quality_eval --dry-run          # quick sanity check (2 queries)
-python -m tests.quality_eval --skip-judge       # deterministic metrics only
 ```
 
 Results are saved to `tests/results/<YYYYMMDD-HHMMSS>/` as `results.json`, `summary.md`, and `transcripts/<id>.md`.
