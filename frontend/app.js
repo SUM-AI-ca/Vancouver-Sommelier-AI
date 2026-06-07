@@ -492,7 +492,7 @@ async function sendMessage() {
   let currentRunId = null;
 
   const abortCtrl = new AbortController();
-  const timeoutId = setTimeout(() => abortCtrl.abort(), 180_000);
+  const timeoutId = setTimeout(() => abortCtrl.abort(), 360_000);
 
   try {
     async function doChat() {
