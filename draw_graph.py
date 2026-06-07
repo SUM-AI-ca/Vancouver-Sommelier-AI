@@ -15,30 +15,49 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 MERMAID = """\
 graph TD
-    START(["START"])
+    USER(["User"])
+    FE["Frontend · SSE Client<br/>360s timeout"]
+    API["FastAPI · SSE Stream"]
+    USER --> FE --> API
+
+    PS{"Proxy Secret"}
+    RL{"Rate Limiter"}
+    API --> PS --> RL
+
+    VAL["Validation Gate<br/>Gemini 3.5 Flash"]
+    RL -- "text" --> VAL
+    VAL -- "invalid" --> REJ(["Rejection"])
+    REJ --> FE
+
+    RESUME{"Pending interrupt?"}
+    VAL -- "valid" --> RESUME
+    RL -- "image" --> RESUME
+
+    RESUME -- "new turn" --> ER
+    RESUME -- "resume" --> ER
+
     ER{"entry_router"}
-
-    START --> ER
-
     VIS["Vision Node<br/>Gemini 3.5 Flash"]
     ER -- "image" --> VIS
 
-    SUP["Supervisor<br/>Gemini 3.5 Flash<br/>Route + Synthesize"]
+    SUP["Supervisor<br/>Gemini 3.5 Flash · max 7 rounds"]
     VIS --> SUP
     ER -- "text" --> SUP
 
-    CLAR["ask_user_clarification"]
-    PREF["update_preferences"]
-    SUP -.-> CLAR
-    SUP -.-> PREF
+    MEM[("InMemorySaver<br/>thread_id state")]
+    SUP -. "checkpoint" .-> MEM
 
-    SUP -- "sommelier_agent_tool" --> SOM_A
-    SUP -- "sourcing_agent_tool" --> SRC_A
-    SUP -- "menu_architect_tool" --> MA_A
+    CLAR["ask_user_clarification<br/>interrupt · max 3/turn"]
+    SUP -- "ambiguous" --> CLAR
+    CLAR -- "resume" --> SUP
 
-    subgraph SOM ["Sommelier Agent - ReAct max 3 rounds"]
-        SOM_A["agent LLM"]
-        SOM_T["tools"]
+    SUP --> SOM_A
+    SUP --> SRC_A
+    SUP --> MA_A
+
+    subgraph SOM ["Sommelier · ReAct · max 4 rounds"]
+        SOM_A["Gemini 3.1 Pro Preview"]
+        SOM_T["ToolNode"]
         SOM_R(["return"])
         SOM_A -- "tool_calls" --> SOM_T --> SOM_A
         SOM_A -- "done" --> SOM_R
@@ -48,11 +67,11 @@ graph TD
         SOM_T -.-> SWG1
     end
 
-    subgraph SRC ["Sourcing Agent - ReAct max 3 rounds"]
-        SRC_A["agent LLM"]
-        SRC_T["tools"]
+    subgraph SRC ["Sourcing · ReAct · max 4 rounds"]
+        SRC_A["Gemini 3.5 Flash"]
+        SRC_T["ToolNode"]
         SRC_R(["return"])
-        SRC_A -- "tool_calls" --> SRC_T --> SRC_A
+        SRC_A -- "6 stores parallel" --> SRC_T --> SRC_A
         SRC_A -- "done" --> SRC_R
         BCL["BC Liquor"]
         EW["Everything Wine"]
@@ -68,13 +87,13 @@ graph TD
         SRC_T -.-> LGC
     end
 
-    subgraph MA ["Menu Architect - ReAct max 4 rounds - B2B"]
-        MA_A["agent LLM"]
-        MA_T["tools"]
+    subgraph MA ["Menu Architect · ReAct · max 5 rounds · B2B"]
+        MA_A["Gemini 3.1 Pro Preview"]
+        MA_T["ToolNode"]
         MA_R(["return"])
         MA_A -- "tool_calls" --> MA_T --> MA_A
         MA_A -- "done" --> MA_R
-        MA_SRC["sourcing_agent_tool<br/>A2A hand-off"]
+        MA_SRC["sourcing_agent · A2A"]
         MA_SWG["search_web_grounded"]
         MA_T -.-> MA_SRC
         MA_T -.-> MA_SWG
@@ -83,11 +102,29 @@ graph TD
     SOM_R --> SUP
     SRC_R --> SUP
     MA_R --> SUP
+    MA_SRC -. "A2A" .-> SRC_A
 
-    MA_SRC -. "calls" .-> SRC_A
+    ERR["tool_error_to_json"]
+    SOM_T -. "err" .-> ERR
+    SRC_T -. "err" .-> ERR
+    MA_T -. "err" .-> ERR
 
-    FINISH(["END - SSE to user"])
-    SUP -- "final answer" --> FINISH
+    SSE["SSE Events<br/>token · tool_start · tool_result<br/>clarification · done"]
+    SUP -- "final answer" --> SSE --> FE --> USER
+
+    LS["LangSmith"]
+    API -. "traces" .-> LS
+
+    classDef gate fill:#fff3cd,stroke:#856404,color:#856404
+    classDef agent fill:#d4edda,stroke:#155724,color:#155724
+    classDef tool fill:#cce5ff,stroke:#004085,color:#004085
+    classDef infra fill:#f8d7da,stroke:#721c24,color:#721c24
+    classDef store fill:#e2e3e5,stroke:#383d41,color:#383d41
+    class VAL,RL,PS,RESUME gate
+    class SUP,SOM_A,SRC_A,MA_A,VIS agent
+    class CLAR,RPW,SWG1,MA_SRC,MA_SWG tool
+    class BCL,EW,OKC,STP,MRQ,LGC store
+    class ERR,LS infra
 """
 
 

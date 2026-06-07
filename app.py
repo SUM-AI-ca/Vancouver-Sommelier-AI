@@ -243,7 +243,6 @@ INNER_TOOL_LABELS = {
     "search_web_grounded_tool": "Web Search",
     "reasoning_pair_wine_tool": "Wine Pairing",
     "sourcing_agent_tool": "Sourcing Agent",
-    "update_preferences_tool": "Preferences",
     "ask_user_clarification_tool": "Clarification",
 }
 

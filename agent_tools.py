@@ -159,18 +159,20 @@ async def ask_user_clarification_tool(
     question: str,
     options: list[str] | None = None,
 ) -> str:
-    """Ask the user a clarifying question when the request or available data is genuinely ambiguous.
+    """Ask the user a clarifying question. When in doubt, ASK — don't guess.
 
-    Use ONLY when:
-    - The user query has multiple plausible interpretations that would yield very different answers
+    Use when:
+    - The request is ambiguous — 2+ plausible interpretations with materially different answers
       (e.g. "good wine" with no budget/style/occasion hint).
-    - Tool results have several closely-matched products and the user's preference would break the tie.
-    - Essential information is missing (food pairing request with no dish; "the second one" with no
-      prior context in conversation history).
+    - Essential information is missing (pairing with no dish, budget question with no range,
+      "the second one" with no prior context).
+    - Specialist results are inconclusive — 0 results (wrong spelling?), too many matches across
+      different categories, or conflicting data between specialists.
+    - Too many strong options — user's preference (occasion, taste, budget) would meaningfully
+      filter them down.
 
     Do NOT use when:
-    - A reasonable default answer exists from conversation history.
-    - The query is vague but answerable (e.g. "recommend a red" — just pick ~5 across styles).
+    - A reasonable default exists ("recommend a red" → just pick ~5 across styles).
     - You are stalling instead of making a judgment call.
 
     Args:
@@ -193,28 +195,6 @@ async def ask_user_clarification_tool(
     })
 
 
-@tool
-async def update_preferences_tool(
-    budget_max: float | None = None,
-    add_varietals: list[str] | None = None,
-    sweetness: str | None = None,
-    style: str | None = None,
-) -> str:
-    """Record a stable user preference for use in future turns.
-    Call when the user expresses a preference that should persist
-    (e.g., "I always want to stay under $50", "I prefer dry whites").
-    Do NOT call for one-off filters within a single query.
-    """
-    return json.dumps({
-        "status": "ok",
-        "tool": "update_preferences",
-        "budget_max": budget_max,
-        "add_varietals": add_varietals,
-        "sweetness": sweetness,
-        "style": style,
-    })
-
-
 # ── Tool groupings ───────────────────────────────────────────────
 
 SOURCING_TOOLS = [
@@ -233,7 +213,6 @@ SOMMELIER_TOOLS = [
 
 SUPERVISOR_DIRECT_TOOLS = [
     ask_user_clarification_tool,
-    update_preferences_tool,
 ]
 
 # Flat set bound by the legacy single orchestrator (agent.py) until the Supervisor lands.

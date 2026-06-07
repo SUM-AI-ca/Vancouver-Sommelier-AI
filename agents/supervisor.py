@@ -23,4 +23,4 @@ tool groupings are in agent_tools.py.
 #   price / stock / where-to-buy / "near me" / hours      → sourcing_agent_tool
 #   what to drink / pairing / education / reviews         → sommelier_agent_tool
 #   "design a drink menu" / food-menu image (B2B)         → menu_architect_tool
-#   persistent preference / genuine ambiguity             → update_preferences / ask_user_clarification
+#   genuine ambiguity                                     → ask_user_clarification

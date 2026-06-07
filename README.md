@@ -13,21 +13,26 @@ Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend 
 ```
 User query (+ optional wine label / wine list / food menu photo)
     ↓
-Cloudflare Pages (frontend/ — vanilla HTML/CSS/JS, no build step)
-    ↓  CORS (cross-origin fetch)
+Cloudflare Pages (frontend/ — vanilla JS SSE client, 360s timeout)
+    ↓  POST /api/chat { message, thread_id, images }
 Google Cloud Run — FastAPI backend (app.py — SSE streaming)
     ↓
-Validation Gate (validation.py — Gemini Flash classifier)   ※ bypassed when image attached
+Proxy Secret check (Cloudflare) → Rate Limiter (slowapi)
+    ↓
+Validation Gate (validation.py — Gemini Flash)   ※ bypassed when image attached
     │
-    ├─ INVALID → reject in user's language → skip graph → end
+    ├─ INVALID → reject in user's language → SSE done → end
     │
     └─ VALID ↓
-LangGraph Supervisor (agent.py — Gemini 3.5 Flash)
+Pending interrupt? ──(yes)──→ Command(resume=reply)
+    │(no — new turn)                    │
+    ↓                                   ↓
+LangGraph Supervisor (agent.py — Gemini 3.5 Flash, max 7 tool rounds)
     │
     │   entry_router ─(image)──→ vision_node ─┐
     │                └─(text)────────────────┴→ supervisor
-    │
-    │   supervisor → specialist routing (+ owns clarification / preferences)
+    │                                                ↕ InMemorySaver (thread_id)
+    │   supervisor → specialist routing (+ owns clarification)
     │       ↓ (ask_user_clarification_tool)
     │    interrupt() → SSE clarification_request → user reply
     │       ↓ Command(resume=...) → next supervisor round
@@ -35,20 +40,29 @@ LangGraph Supervisor (agent.py — Gemini 3.5 Flash)
     │   ┌──────────────────────────────────────────────────────────────────┐
     │   │  Specialist Agents (independent ReAct sub-graphs)                │
     │   │                                                                  │
-    │   │  Sourcing Agent ──── parallel search across 6 retail chains      │
+    │   │  Sourcing Agent ──── 6 retailers in parallel (max 4 rounds)      │
     │   │    └─ bcliquor, everythingwine, okanagan_cellars,               │
     │   │       suttonplace, marquis, legacy                              │
     │   │                                                                  │
-    │   │  Sommelier Agent ── pairing recs + Google Search grounding       │
+    │   │  Sommelier Agent ── pairing + grounding (max 4 rounds)           │
     │   │    └─ reasoning_pair_wine, search_web_grounded                  │
     │   │                                                                  │
-    │   │  Menu Architect ─── (B2B) food menu → beverage menu design      │
-    │   │    └─ sourcing_agent (A2A), search_web_grounded                 │
+    │   │  Menu Architect ─── B2B beverage menu design (max 5 rounds)      │
+    │   │    └─ sourcing_agent (A2A hand-off), search_web_grounded        │
     │   └──────────────────────────────────────────────────────────────────┘
     │
+    │   tool_error_to_json — exceptions → status:error (non-fatal)
     │   supervisor final answer → END
     ↓
-Real-time SSE token streaming → frontend (agent-box UI + tool badges + markdown rendering)
+Real-time SSE token streaming → frontend (tool badges + markdown + PDF export)
+    ↓
+LangSmith tracing (optional)
+```
+
+A full Mermaid diagram with color-coded nodes (agents, tools, gates, stores) is available:
+
+```bash
+python draw_graph.py          # outputs graph_mermaid.md + graph.png
 ```
 
 ---
@@ -59,7 +73,7 @@ Supervisor + 3 specialist pattern. Each specialist runs as an independent ReAct 
 
 | Agent | Role | Tools | Model |
 |-------|------|-------|-------|
-| **Supervisor** | Query routing, specialist coordination, final answer synthesis, owns clarification/preferences | ask_user_clarification, update_preferences + 3 specialist tools | Gemini 3.5 Flash |
+| **Supervisor** | Query routing, specialist coordination, final answer synthesis, owns clarification | ask_user_clarification + 3 specialist tools | Gemini 3.5 Flash |
 | **Sourcing Agent** | Inventory, pricing, where-to-buy — parallel calls to all 6 retail chains every time | 6 retailer tools | Gemini 3.5 Flash |
 | **Sommelier Agent** | Pairing recs, drinks knowledge, reviews/scores (Google grounding, with citations) | reasoning_pair_wine, search_web_grounded | Gemini 3.1 Pro Preview |
 | **Menu Architect** | (B2B) Design beverage menu from food menu → source real products/prices (A2A delegation) | sourcing_agent (A2A), search_web_grounded | Gemini 3.1 Pro Preview |
@@ -118,9 +132,10 @@ The Supervisor can **explicitly** ask the user follow-up questions using LangGra
 
 Flow: Supervisor calls `ask_user_clarification_tool(question, options?)` → `interrupt({...})` fires inside the tool → graph pauses at the thread's checkpoint → `app.py` sends an SSE `clarification_request` event with question + options → frontend renders option chips + hint UI → user clicks an option or types free text → next `/api/chat` call detects pending interrupt via `aget_state(config)` → `Command(resume=req.message)` resumes the graph → tool receives the user's reply as a string and returns normally → next supervisor round proceeds.
 
-Rules (`prompts.py` Guideline G6):
-- **Ask**: genuinely ambiguous queries with 2+ interpretations, closely-matched results requiring preference tie-breaking, missing essential info.
-- **Don't ask**: when user_preferences resolve it, when a default answer is natural, for informational/educational questions.
+Rules (`prompts.py` Guideline G6 — "when in doubt, ASK"):
+- **Ask**: ambiguous requests (2+ interpretations), missing essential info (pairing with no dish, budget with no range), specialist results inconclusive (0 results, too many matches across categories), conflicting data between specialists, too many strong options that user preference would meaningfully filter.
+- **Don't ask**: when a reasonable default exists, or you are stalling instead of making a judgment call.
+- **Options**: 2-7 clickable options when natural; user can always type free text instead.
 - **Limit**: max 3 per turn (`MAX_CLARIFICATIONS_PER_TURN`). At cap, forced to give best-effort answer.
 - **Round counting**: clarification-only rounds are excluded from `MAX_TOOL_ROUNDS` count.
 - **Validation skip on resume**: resume branch skips the validation gate so short clarification replies don't trip the off-topic filter.

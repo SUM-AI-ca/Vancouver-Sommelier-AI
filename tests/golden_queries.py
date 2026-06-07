@@ -168,7 +168,7 @@ MT_REF_QUERIES = [
 
 # =====================================================================
 # MT-PREF — Multi-turn Preference (2 x 3 turns = 6 invocations)
-# update_preferences should be called; subsequent turns should respect prefs.
+# Preferences are remembered via conversation history; subsequent turns should respect them.
 # =====================================================================
 MT_PREF_QUERIES = [
     {
