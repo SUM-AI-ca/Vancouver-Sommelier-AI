@@ -102,7 +102,7 @@ let threadId = null;
 let sending = false;
 let activeTools = 0;
 
-const INITIAL_GREETING = "Ask about drinks in Vancouver: wine, beer, spirits, cider — prices, availability, food pairings, or anything else.";
+const INITIAL_GREETING = "Hi there! Whether you’re building a drink menu for your restaurant, planning an event, or just want something good to drink tonight — I can help. Tell me as much as you can (budget, occasion, guest count, cuisine, flavor preferences) and I’ll find the right picks for you.";
 
 /* ── Overlay open/close ──────────────────────────── */
 
