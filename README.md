@@ -10,6 +10,8 @@ Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend 
 
 ## Architecture
 
+![Architecture Diagram](frontend/images/architecture-diagram.png)
+
 ```
 User query (+ optional wine label / wine list / food menu photo)
     ↓
