@@ -454,3 +454,57 @@ python -m tests.quality_eval --dry-run          # quick sanity check (2 queries)
 ```
 
 Results are saved to `tests/results/<YYYYMMDD-HHMMSS>/` as `results.json`, `summary.md`, and `transcripts/<id>.md`.
+
+### How it works — LLM-as-Judge
+
+Each turn's final response is scored by a **separate judge model** (Gemini 3.1 Pro Preview, temperature=0) — deliberately distinct from the agent's Gemini 3.5 Flash, so the system never grades its own work. The judge sees the user question, prior turns (for follow-ups), the **complete tool evidence** the agent received, and the final response. It scores five dimensions: **relevance, correctness, helpfulness, coherence, harmlessness** (plus an `overall`).
+
+**Correctness is derived, not guessed** (RAGAS-style faithfulness). Instead of asking the judge for a holistic "how correct is this" number, `judge.py` has it extract every **atomic, checkable claim** (price, review score, stock level, vintage, purchase URL, region, ABV, producer fact) and label each one against the evidence:
+
+| Label | Meaning | Counts as hallucination? |
+|-------|---------|--------------------------|
+| `SUPPORTED` | The specific value appears in the tool evidence (numbers must match) | No |
+| `GENERAL_KNOWLEDGE` | Not in evidence, but standard sommelier/world knowledge ("Syrah shows black pepper") | No — **excluded from the denominator** |
+| `NOT_IN_EVIDENCE` | A specific checkable value that is genuinely absent and not general knowledge | **Yes** |
+| `CONTRADICTED` | The evidence states a different value (says $29.99, evidence says $34.99) | **Yes (2× weight)** |
+
+The correctness score (1–5) is then computed deterministically from the label counts:
+
+```
+checkable T = #SUPPORTED + #NOT_IN_EVIDENCE + #CONTRADICTED          (GENERAL_KNOWLEDGE excluded)
+penalty     = #NOT_IN_EVIDENCE + 2 × #CONTRADICTED                   (CONTRADICTION_WEIGHT = 2)
+ratio       = penalty / T  →  bands (0.0→5, 0.15→4, 0.35→3, 0.6→2, else 1)
+```
+
+Excluding `GENERAL_KNOWLEDGE` from the denominator is the key anti-false-positive rule — it prevents a competent sommelier statement ("tannic reds clash with sweet sauces") from being scored as a hallucination. The tunables (`CONTRADICTION_WEIGHT`, `CORRECTNESS_RATIO_BANDS`, `EVIDENCE_BUDGET_CHARS`) live in [`tests/judge.py`](tests/judge.py) / [`tests/metrics.py`](tests/metrics.py) and are documented in [`HYPERPARAMETERS.md`](HYPERPARAMETERS.md). Transient judge API failures are retried with exponential backoff so one blip doesn't drop a turn's score.
+
+### Golden query suite
+
+28 queries across **15 categories** in [`tests/golden_queries.py`](tests/golden_queries.py); multi-turn entries expand to **34 graded turns**. Each entry declares what the agent *should* do, so the judge has explicit expectations.
+
+| | | |
+|---|---|---|
+| `INV` inventory / buyability | `CRI` reviews / critic opinion | `DISC` discovery / filter |
+| `PAIR-W` western common pairings | `PAIR-C` complex western pairings | `PAIR-N` non-western pairings |
+| `EDU` educational | `SOM` sommelier-level | `BEG` beginner-level |
+| `MT-REF` multi-turn reference resolution | `MT-PREF` multi-turn preference | `FB` fallback / disambiguation |
+| `ML` multilingual (ZH / JA) | `B2B` menu architect | `OFF` off-topic / safety |
+
+### Latest run — `20260608-093835`
+
+28 queries → 34 turns, 0 errored.
+
+| Dimension | Average (N=34) |
+|-----------|----------------|
+| relevance | 5.00 |
+| helpfulness | 5.00 |
+| harmlessness | 5.00 |
+| coherence | 4.97 |
+| correctness | 4.82 |
+| **overall** | **4.88** |
+
+**Claim & evidence health** — across **542** extracted claims: 523 `SUPPORTED`, 12 `GENERAL_KNOWLEDGE`, 5 `NOT_IN_EVIDENCE`, 2 `CONTRADICTED` → **~96.5% grounded** in retrieved evidence. 0 turns hit the evidence-truncation budget (so low-correctness turns are real signal, not a measurement artifact).
+
+The 7 hallucination-flagged claims cluster on a single pattern: the agent embellishes **wine production details that no tool returned** — grape-blend composition, lees-aging duration, winemaker names, and tasting-note attribution — while its sourcing facts (price, stock, links, scores) stay fully grounded. This finding feeds the prompt "Never invent" guardrails in [`prompts.py`](prompts.py).
+
+Per-run artifacts: `results.json` (full structured data), `summary.md` (human-readable rollup), and `transcripts/<id>.md` (per-query tool I/O + final response + judge verdicts).
