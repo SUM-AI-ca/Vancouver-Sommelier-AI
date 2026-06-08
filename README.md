@@ -2,8 +2,6 @@
 
 A multi-agent AI drinks concierge for the Vancouver market. Built on a LangGraph Supervisor + 3 specialist agent architecture, it searches real-time inventory and pricing across 6 Vancouver-area retail chains (including BC Liquor Stores' 200+ locations and Everything Wine's 4 Lower Mainland stores), provides expert knowledge via Google Search grounding, and offers food pairing guidance. Supports both B2C (consumer recommendations) and B2B (beverage menu design for F&B businesses).
 
-**Live: [wineaiagent.com](https://wineaiagent.com)**
-
 Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), FastAPI real-time SSE token streaming, multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, request timeout + error recovery, LLM-as-judge quality eval pipeline.
 
 ---
