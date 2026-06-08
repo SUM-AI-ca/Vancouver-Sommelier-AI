@@ -48,6 +48,8 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(_PROJECT_ROOT / ".env")
 
+from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
+
 from agent import get_graph  # noqa: E402
 from tests.golden_queries import GOLDEN_QUERIES, total_invocations  # noqa: E402
 from tests.judge import judge_response  # noqa: E402
@@ -56,7 +58,29 @@ from tests.metrics import (  # noqa: E402
     extract_tool_call_records,
     extract_tool_messages,
     summarize_tool_results,
+    to_text,
 )
+
+
+def _build_conversation_context(full_state: dict, new_msgs: list) -> str | None:
+    """Compact prior-turn transcript (user + assistant final answers) for follow-ups.
+
+    Lets the judge resolve references like "the second one" without re-feeding tools.
+    Returns None for the first turn (no prior messages).
+    """
+    msgs = full_state.get("messages", []) if isinstance(full_state, dict) else []
+    prior = msgs[: len(msgs) - len(new_msgs)] if new_msgs else msgs
+    if not prior:
+        return None
+    lines: list[str] = []
+    for m in prior:
+        if isinstance(m, HumanMessage):
+            lines.append(f"User: {to_text(m.content).strip()}")
+        elif isinstance(m, AIMessage) and not m.tool_calls:
+            txt = to_text(m.content).strip()
+            if txt:
+                lines.append(f"Assistant: {txt[:2000]}")
+    return "\n\n".join(lines) if lines else None
 
 
 # =====================================================================
@@ -112,21 +136,39 @@ async def evaluate_turn(
             "error": error_str,
             "tool_calls": [],
             "final_response": "",
+            "evidence": "",
+            "evidence_meta": {},
             "judge": None,
         }
 
+    # This turn's tool calls + final answer come from the new messages only…
     scoped_state = {**full_state, "messages": new_msgs}
-
     tool_call_records = extract_tool_call_records(scoped_state)
-    tool_messages = extract_tool_messages(scoped_state)
     final_response = extract_final_response(scoped_state)
 
-    tr_summary = summarize_tool_results(tool_messages)
+    # A turn can legitimately END by asking the user a clarifying question (an interrupt),
+    # leaving no tool-free AIMessage — so final_response is empty even though the agent
+    # responded correctly. Surface the clarification question as the agent's reply so the
+    # judge evaluates whether asking was sensible, instead of scoring it as an empty answer.
+    if not final_response.strip() and tool_call_records:
+        last = tool_call_records[-1]
+        if last.get("name") == "ask_user_clarification_tool":
+            question = (last.get("args") or {}).get("question", "")
+            if question:
+                final_response = f"[Asked the user a clarifying question] {question}"
+
+    # …but the EVIDENCE shown to the judge is the full accumulated thread, so a
+    # follow-up that reuses prior-turn results ("the second one") can still be verified.
+    evidence_messages = extract_tool_messages(full_state)
+    tr_summary, evidence_meta = summarize_tool_results(evidence_messages)
+    conversation_context = _build_conversation_context(full_state, new_msgs)
+
     judge_scores = await judge_response(
         user_query=turn_expected.get("query", ""),
         tool_results_summary=tr_summary,
         final_response=final_response,
         judge_focus=turn_expected.get("judge_focus"),
+        conversation_context=conversation_context,
     )
 
     return {
@@ -134,8 +176,10 @@ async def evaluate_turn(
         "latency_s": round(latency_s, 2),
         "error": "",
         "tool_calls": tool_call_records,
-        "tool_messages_count": len(tool_messages),
+        "tool_messages_count": len(evidence_messages),
         "final_response": final_response,
+        "evidence": tr_summary,
+        "evidence_meta": evidence_meta,
         "judge": judge_scores,
     }
 
@@ -202,6 +246,8 @@ def _print_turn_summary(prefix: str, idx: int, r: dict) -> None:
     ]
     if low_dims:
         print(f"{prefix}      low: {', '.join(low_dims)}", flush=True)
+    if (r.get("evidence_meta") or {}).get("truncated"):
+        print(f"{prefix}      ⚠ evidence truncated — low correctness may be an artifact", flush=True)
 
 
 # =====================================================================
@@ -296,6 +342,22 @@ def aggregate(results: list[dict]) -> dict:
             f"**Overall < 3 응답 {n_low}/{len(completed)}건** — 아래 Per-Query Detail에서 개별 이슈 확인 필요."
         )
 
+    # Evidence & claim health — distinguishes real hallucinations from measurement artifacts.
+    n_evidence_truncated = sum(
+        1 for t in completed if (t.get("evidence_meta") or {}).get("truncated")
+    )
+    claim_totals = {"SUPPORTED": 0, "GENERAL_KNOWLEDGE": 0, "NOT_IN_EVIDENCE": 0, "CONTRADICTED": 0}
+    for t in completed:
+        counts = (t.get("judge") or {}).get("claim_label_counts") or {}
+        for k in claim_totals:
+            claim_totals[k] += int(counts.get(k, 0) or 0)
+    if n_evidence_truncated:
+        top_issues.append(
+            f"**Evidence 잘림 {n_evidence_truncated}/{len(completed)}건** — judge가 일부 도구 결과를 못 봄. "
+            "낮은 correctness가 실제 환각이 아니라 측정 artifact일 수 있음. "
+            "`tests/metrics.py`의 `EVIDENCE_BUDGET_CHARS` 상향 검토."
+        )
+
     return {
         "n_queries": len(results),
         "n_turns": n_turns,
@@ -307,6 +369,8 @@ def aggregate(results: list[dict]) -> dict:
         "by_category": by_cat,
         "judge_issues": all_issues,
         "top_issues_for_next_session": top_issues,
+        "evidence_truncated_turns": n_evidence_truncated,
+        "claim_label_totals": claim_totals,
     }
 
 
@@ -342,6 +406,26 @@ def render_summary_md(meta: dict, agg: dict, results: list[dict]) -> str:
     jn = agg["judge_n"]
     for dim in ("relevance", "correctness", "helpfulness", "coherence", "harmlessness", "overall"):
         add(f"| {dim} | {j[dim]} | {jn[dim]} |")
+    add("")
+    add("_correctness is derived from per-claim faithfulness labels (see judge.py), not a holistic guess._")
+    add("")
+
+    add("## Evidence & Claim Health")
+    add("")
+    add(
+        f"- Turns with **truncated** evidence: **{agg.get('evidence_truncated_turns', 0)}** / {agg['n_completed']} "
+        "(should be 0 — >0 means raise `EVIDENCE_BUDGET_CHARS` in `tests/metrics.py`; "
+        "low correctness on those turns may be a measurement artifact, not a real hallucination)"
+    )
+    ct = agg.get("claim_label_totals", {})
+    if ct:
+        add(
+            f"- Claim labels across all turns — SUPPORTED: {ct.get('SUPPORTED', 0)}, "
+            f"GENERAL_KNOWLEDGE: {ct.get('GENERAL_KNOWLEDGE', 0)}, "
+            f"NOT_IN_EVIDENCE: {ct.get('NOT_IN_EVIDENCE', 0)}, "
+            f"CONTRADICTED: {ct.get('CONTRADICTED', 0)} "
+            "(NOT_IN_EVIDENCE + CONTRADICTED = the real hallucination signal)"
+        )
     add("")
 
     add("## Latency")
@@ -462,14 +546,50 @@ def render_transcript_md(q: dict) -> str:
         lines.append("")
         lines.append(f"### Judge Scores")
         lines.append("")
-        if t.get("judge"):
-            lines.append("```json")
-            j = dict(t["judge"])
+        judge = t.get("judge")
+        if judge:
+            claims = judge.get("claims", []) or []
+            j = dict(judge)
             j.pop("raw", None)
+            j.pop("claims", None)
+            lines.append("```json")
             lines.append(json.dumps(j, indent=2, default=str))
             lines.append("```")
+            lines.append("")
+            lines.append("### Claim Verdicts")
+            lines.append("")
+            if claims:
+                lines.append("| Label | Claim | Evidence quote |")
+                lines.append("|---|---|---|")
+                for c in claims:
+                    claim = str(c.get("claim", "")).replace("|", "\\|").replace("\n", " ")[:200]
+                    eq = c.get("evidence_quote")
+                    eq = str(eq).replace("|", "\\|").replace("\n", " ")[:200] if eq else "—"
+                    lines.append(f"| {c.get('label', '')} | {claim} | {eq} |")
+            else:
+                lines.append("_(no checkable factual claims extracted)_")
         else:
             lines.append("_(judge error)_")
+        lines.append("")
+
+        # Evidence the judge actually saw — the ground truth used to label claims.
+        # Check here first when a score looks wrong.
+        meta = t.get("evidence_meta") or {}
+        trunc = " ⚠ TRUNCATED" if meta.get("truncated") else ""
+        lines.append("### Evidence shown to judge")
+        lines.append("")
+        lines.append(
+            f"_{meta.get('n_tool_messages', 0)} tool messages, "
+            f"{meta.get('total_evidence_chars', 0)} chars (budget {meta.get('budget_chars', '—')}){trunc}_"
+        )
+        lines.append("")
+        lines.append("<details><summary>Show evidence</summary>")
+        lines.append("")
+        lines.append("````markdown")
+        lines.append(t.get("evidence") or "(none)")
+        lines.append("````")
+        lines.append("")
+        lines.append("</details>")
         lines.append("")
         lines.append(f"### Latency")
         lines.append("")

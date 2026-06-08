@@ -30,7 +30,13 @@ spirits; the wine shops will simply return nothing for those — that's fine.
 
 ## Rules
 - NEVER invent a price, stock level, store, or URL — cite only what a tool returned, and \
-include the product/store link whenever the tool provided one.
+include the product/store link whenever the tool provided one. If a specific (price, stock, \
+store) isn't in any tool result, omit it — never approximate or guess a price range.
+- **"Available at <store>" only when that store's tool shows stock > 0.** A product a store \
+lists but shows as zero / unavailable is NOT available there — say "out of stock" rather \
+than claiming availability.
+- **Keep each price, stock, and store bound to its exact product** — never attach one \
+product's price, stock, or store to a different product.
 - If every store is empty, say so plainly; do not fabricate stock.
 - When multiple stores carry the same product, list ALL with prices so the user can compare.
 

@@ -64,6 +64,41 @@
 | `models.py:7` `MODEL` | gemini-3.5-flash |
 | `models.py:8` `JUDGE_MODEL` | gemini-3.1-pro-preview |
 
+## Eval — LLM-as-Judge (tests/)
+
+Evidence shown to the judge is **complete — nothing is cut**. The agent answers from the
+full raw tool results, so any per-item compaction makes correctly-grounded facts look
+hallucinated. Every result, the full grounding answer/recommendation, every product field,
+and full web snippets are passed through verbatim. There are **no per-item caps**; the only
+limit is one overall crash-guard ceiling sized near the judge model's context capacity.
+
+| Where | Value | Purpose |
+|---|---|---|
+| `tests/metrics.py` `EVIDENCE_BUDGET_CHARS` | 2_000_000 | **Crash-guard only** (~500k tokens, near Gemini 3.x Pro's ~1M-token input). Never reached for this workload, so nothing is truncated. If ever exceeded, max-min fair allocation truncates the largest blocks proportionally — never dropping a whole tool — and sets `truncated=True` |
+| `tests/judge.py` `MAX_CLAIMS` | 200 | Ceiling on persisted/scored claims per turn — high enough to never clip a turn |
+| `tests/judge.py` `CONTRADICTION_WEIGHT` | 2 | A `CONTRADICTED` claim counts double a `NOT_IN_EVIDENCE` one |
+| `tests/judge.py` `CORRECTNESS_RATIO_BANDS` | 0→5, ≤0.15→4, ≤0.35→3, ≤0.6→2, else 1 | Maps faithfulness penalty ratio to a 1-5 correctness score |
+
+No per-item caps exist anymore (the earlier `MAX_RESULTS_PER_TOOL` / `WEB_SNIPPET_CHARS` /
+`SEARCH_ANSWER_CHARS` / `RECOMMENDATION_CHARS` / `EXTRA_FIELD_CHARS` were removed). The
+`truncated` flag in `summary.md` should always be 0; if it isn't, the workload grew past the
+crash-guard and `EVIDENCE_BUDGET_CHARS` should be raised.
+
+**Correctness scoring** is derived deterministically from the judge's per-claim labels
+(RAGAS-style faithfulness), not a holistic guess:
+
+```
+ratio = (#NOT_IN_EVIDENCE + CONTRADICTION_WEIGHT·#CONTRADICTED)
+        / (#SUPPORTED + #NOT_IN_EVIDENCE + #CONTRADICTED)
+correctness = CORRECTNESS_RATIO_BANDS(ratio)
+```
+
+`GENERAL_KNOWLEDGE` claims are excluded from the denominator (standard sommelier/world
+knowledge is not a grounding failure). When nothing is checkable (T == 0), it falls back
+to the judge's holistic `correctness`. `summary.md` reports an **Evidence & Claim Health**
+block: turns with truncated evidence (should be 0) and the global claim-label distribution
+(`NOT_IN_EVIDENCE + CONTRADICTED` is the real hallucination signal).
+
 ## Missing (no explicit setting)
 
 - **`recursion_limit`** — LangGraph default (25)

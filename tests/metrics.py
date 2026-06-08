@@ -62,6 +62,60 @@ def extract_tool_call_records(state: dict) -> list[dict]:
 # =====================================================================
 # Tool result summarization for the judge
 # =====================================================================
+#
+# Design goal: the judge must see *exactly everything the agent saw* — nothing cut.
+# The agent composes its answer from the full, raw tool results, so any lossy compaction
+# here creates an information asymmetry that makes the judge flag correctly-grounded facts
+# as hallucinations. We therefore apply NO per-item caps: every result, the full grounding
+# answer, every product field, and the full web snippet are passed through verbatim. The
+# only limit is a single overall ceiling sized near the judge model's context capacity, and
+# it exists purely as a crash-guard so an extreme payload degrades gracefully (fair
+# truncation + a `truncated` flag) instead of failing the API call. For this workload it is
+# never reached. See HYPERPARAMETERS.md.
+
+# Crash-guard ceiling only — set near the judge model's input capacity (Gemini 3.x Pro is
+# ~1M tokens). ~2M chars (~500k tokens) leaves ample headroom and is never hit in practice.
+EVIDENCE_BUDGET_CHARS = 2_000_000
+
+_KNOWN_PRODUCT_FIELDS = frozenset({
+    "name", "title", "current_price", "price", "sale_price", "regular_price",
+    "retail_price", "product_url", "url", "available_units", "stock_qty",
+    "inventory_level", "store_count", "store_stock", "on_sale", "consumer_rating",
+    "vintage",
+})
+
+
+def _fair_allocate(sizes: list[int], budget: int) -> list[int]:
+    """Max-min fair allocation of `budget` across items of the given `sizes`.
+
+    Small blocks are never starved by large ones: each block first gets up to an equal
+    share; whatever a small block doesn't use is redistributed to the larger blocks.
+    Returns the allowed size for each block (sum <= budget).
+    """
+    n = len(sizes)
+    if n == 0:
+        return []
+    allowed = [0] * n
+    active = set(range(n))
+    remaining = budget
+    while active:
+        share = remaining // len(active)
+        if share <= 0:
+            break
+        progressed = False
+        for i in list(active):
+            if sizes[i] <= share:
+                allowed[i] = sizes[i]
+                remaining -= sizes[i]
+                active.discard(i)
+                progressed = True
+        if not progressed:
+            # Every remaining block is larger than the equal share — cap each at `share`.
+            for i in active:
+                allowed[i] = share
+            break
+    return allowed
+
 
 def _compact_product(product: dict) -> str:
     """One-line summary of a product from a store tool."""
@@ -101,20 +155,36 @@ def _compact_product(product: dict) -> str:
         parts.append(f"rating={consumer_rating}")
     if url:
         parts.append(url)
+
+    # Fallback: surface EVERY other non-empty field verbatim (description, varietal,
+    # country, abv, review source, …) so nothing the agent could have cited is invisible.
+    extras = []
+    for k, v in product.items():
+        if k in _KNOWN_PRODUCT_FIELDS or v in (None, "", [], {}):
+            continue
+        sval = (json.dumps(v, ensure_ascii=False, default=str)
+                if isinstance(v, (dict, list)) else str(v))
+        extras.append(f"{k}={sval}")
+    if extras:
+        parts.append("{" + "; ".join(extras) + "}")
     return " | ".join(parts)
 
 
 def _summarize_inner_tool(tool_name: str, content) -> str:
-    """Summarize one inner tool result from a sub-agent's inner_tools array."""
+    """Render one inner tool result from a sub-agent's inner_tools array — verbatim.
+
+    No per-item caps: every result, the full grounding answer/recommendation, and full
+    web snippets are passed through so the judge sees exactly what the agent saw.
+    """
     if isinstance(content, str):
         try:
             parsed = json.loads(content)
         except (json.JSONDecodeError, TypeError):
-            return f"#### {tool_name}\n{content[:2000]}"
+            return f"#### {tool_name}\n{content}"
     elif isinstance(content, dict):
         parsed = content
     else:
-        return f"#### {tool_name}\n{str(content)[:2000]}"
+        return f"#### {tool_name}\n{str(content)}"
 
     status = parsed.get("status", "?")
     results = parsed.get("results", []) or []
@@ -123,13 +193,13 @@ def _summarize_inner_tool(tool_name: str, content) -> str:
 
     answer = parsed.get("answer")
     if answer:
-        lines.append(f"Search answer: {answer[:4000]}")
+        lines.append(f"Search answer: {answer}")
 
     rec = parsed.get("recommendation")
     if rec:
-        lines.append(f"Recommendation: {rec[:3000]}")
+        lines.append(f"Recommendation: {rec}")
 
-    for r in results[:20]:
+    for r in results:
         if not isinstance(r, dict):
             continue
         is_web = ("content" in r
@@ -137,7 +207,7 @@ def _summarize_inner_tool(tool_name: str, content) -> str:
         if is_web:
             title = r.get("title", "?")
             url = r.get("url", "")
-            snippet = (r.get("content") or "")[:300]
+            snippet = r.get("content") or ""
             lines.append(f"  - [{title}]({url}): {snippet}")
         else:
             lines.append(f"  - {_compact_product(r)}")
@@ -145,86 +215,85 @@ def _summarize_inner_tool(tool_name: str, content) -> str:
     return "\n".join(lines)
 
 
+def _build_tool_block(tm: ToolMessage) -> str:
+    """Render one ToolMessage into a full (untruncated) markdown evidence block."""
+    name = getattr(tm, "name", "?")
+    raw = to_text(tm.content)
+
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return f"### {name}\n{raw}"
+
+    status = parsed.get("status", "?")
+    inner_tools = parsed.get("inner_tools")
+
+    if isinstance(inner_tools, list):
+        lines = [f"### {name} (status={status})"]
+        answer = parsed.get("answer", "")
+        if answer:
+            lines.append(f"**Sub-agent synthesis:**\n{answer}")
+        lines.append("")
+        for it in inner_tools:
+            if isinstance(it, dict):
+                lines.append(_summarize_inner_tool(
+                    it.get("tool", "?"), it.get("content", ""),
+                ))
+                lines.append("")
+        return "\n".join(lines)
+
+    results = parsed.get("results", []) or []
+    lines = [f"### {name} (status={status})"]
+    for key in ("answer", "recommendation", "question", "user_reply"):
+        val = parsed.get(key)
+        if val:
+            lines.append(f"{key}: {val}")
+    if results:
+        lines.append(f"({len(results)} results)")
+        for r in results:
+            if isinstance(r, dict):
+                lines.append(f"  - {_compact_product(r)}")
+    return "\n".join(lines)
+
+
 def summarize_tool_results(
     tool_messages: list[ToolMessage],
-    max_chars: int = 30000,
+    budget_chars: int = EVIDENCE_BUDGET_CHARS,
     wine_context: dict | None = None,
-) -> str:
-    """Summarize tool results for the judge prompt.
+) -> tuple[str, dict]:
+    """Render tool results for the judge prompt — complete, with no per-item caps.
 
-    Handles sub-agent responses (with inner_tools) by extracting product-level
-    data from each inner tool, ensuring the judge can see the prices, URLs, and
-    stock levels that the agent actually used to compose its response.
+    Builds a full evidence block per ToolMessage (every result, full grounding answers,
+    full product fields, full web snippets). ``budget_chars`` is only a crash-guard sized
+    near the judge model's context capacity; for this workload it is never reached so
+    ``meta['truncated']`` is False. If an extreme payload ever exceeds it, max-min fair
+    allocation truncates the largest blocks proportionally (never dropping a whole tool)
+    and sets ``truncated=True`` so a low score can be told apart from a real failure.
+    Returns ``(summary, meta)``.
     """
-    chunks = []
-    used = 0
-
-    for tm in tool_messages:
-        name = getattr(tm, "name", "?")
-        raw = to_text(tm.content)
-
-        try:
-            parsed = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            block = f"### {name}\n{raw[:3000]}"
-            if used + len(block) > max_chars:
-                chunks.append("\n[... tool results truncated ...]")
-                break
-            chunks.append(block)
-            used += len(block)
-            continue
-
-        status = parsed.get("status", "?")
-        inner_tools = parsed.get("inner_tools")
-
-        if isinstance(inner_tools, list):
-            lines = [f"### {name} (status={status})"]
-            answer = parsed.get("answer", "")
-            if answer:
-                lines.append(f"**Sub-agent synthesis:**\n{answer}")
-            lines.append("")
-            for it in inner_tools:
-                if isinstance(it, dict):
-                    lines.append(_summarize_inner_tool(
-                        it.get("tool", "?"), it.get("content", ""),
-                    ))
-                    lines.append("")
-            block = "\n".join(lines)
-        else:
-            results = parsed.get("results", []) or []
-            lines = [f"### {name} (status={status})"]
-            for key in ("answer", "recommendation", "question", "user_reply"):
-                val = parsed.get(key)
-                if val:
-                    lines.append(f"{key}: {val}")
-            if results:
-                lines.append(f"({len(results)} results)")
-                for r in results[:20]:
-                    if isinstance(r, dict):
-                        lines.append(f"  - {_compact_product(r)}")
-            block = "\n".join(lines)
-
-        if used + len(block) > max_chars:
-            chunks.append("\n[... tool results truncated ...]")
-            break
-        chunks.append(block)
-        used += len(block)
+    blocks: list[str] = [_build_tool_block(tm) for tm in tool_messages]
 
     if isinstance(wine_context, dict) and wine_context:
-        keys = list(wine_context.keys())[:12]
-        ctx_view = {}
-        for k in keys:
-            rec = wine_context[k]
-            if not isinstance(rec, dict):
-                continue
-            ctx_view[k] = {
-                "display_name": rec.get("display_name"),
-                "best_price": rec.get("best_price"),
-                "n_prices": len(rec.get("prices") or []),
-                "n_critic_reviews": len(rec.get("critic_reviews") or []),
-                "is_bc_vqa": rec.get("is_bc_vqa"),
-            }
-        ctx_blob = json.dumps(ctx_view, indent=2, default=str, ensure_ascii=False)[:2000]
-        chunks.append(f"### wine_context (top {len(ctx_view)} entries)\n{ctx_blob}")
+        ctx_blob = json.dumps(wine_context, indent=2, default=str, ensure_ascii=False)
+        blocks.append(f"### wine_context\n{ctx_blob}")
 
-    return "\n\n".join(chunks)
+    total_full = sum(len(b) for b in blocks)
+    sizes = [len(b) for b in blocks]
+    allowed = _fair_allocate(sizes, budget_chars)
+
+    out_blocks: list[str] = []
+    truncated = False
+    for block, cap in zip(blocks, allowed):
+        if len(block) > cap:
+            truncated = True
+            out_blocks.append(block[:cap] + "\n[... this tool's evidence truncated ...]")
+        else:
+            out_blocks.append(block)
+
+    meta = {
+        "truncated": truncated,
+        "n_tool_messages": len(tool_messages),
+        "total_evidence_chars": total_full,
+        "budget_chars": budget_chars,
+    }
+    return "\n\n".join(out_blocks), meta
