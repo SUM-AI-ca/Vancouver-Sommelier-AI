@@ -93,7 +93,7 @@ graph TD
         MA_R(["return"])
         MA_A -- "tool_calls" --> MA_T --> MA_A
         MA_A -- "done" --> MA_R
-        MA_SRC["sourcing_agent · A2A"]
+        MA_SRC["sourcing_agent (delegate)"]
         MA_SWG["search_web_grounded"]
         MA_T -.-> MA_SRC
         MA_T -.-> MA_SWG
@@ -102,7 +102,7 @@ graph TD
     SOM_R --> SUP
     SRC_R --> SUP
     MA_R --> SUP
-    MA_SRC -. "A2A" .-> SRC_A
+    MA_SRC -. "delegates" .-> SRC_A
 
     ERR["tool_error_to_json"]
     SOM_T -. "err" .-> ERR

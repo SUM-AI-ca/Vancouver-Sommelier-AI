@@ -1,4 +1,4 @@
-"""LLM factory for Vancouver Drinks AI — Gemini via Vertex AI."""
+"""LLM factory for Vancouver Drinks AI — Gemini via Gemini Enterprise Agent Platform (formerly Vertex AI)."""
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -23,7 +23,7 @@ def get_grounded_llm(temperature: float = 0.1) -> ChatGoogleGenerativeAI:
     Returns the base LLM; callers enable grounding by binding the built-in Google
     Search tool (`tools/google_search_tool.py` does this and tolerates both the
     `google_search` and legacy `google_search_retrieval` specs). Grounding uses the
-    same Vertex AI credentials as get_llm — no extra API key.
+    same Gemini Enterprise Agent Platform credentials as get_llm — no extra API key.
     """
     return ChatGoogleGenerativeAI(
         model=MODEL,

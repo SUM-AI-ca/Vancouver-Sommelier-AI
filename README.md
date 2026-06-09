@@ -49,7 +49,7 @@ LangGraph Supervisor (agent.py — Gemini 3.5 Flash, max 7 tool rounds)
     │   │    └─ reasoning_pair_wine, search_web_grounded                  │
     │   │                                                                  │
     │   │  Menu Architect ─── B2B beverage menu design (max 5 rounds)      │
-    │   │    └─ sourcing_agent (A2A hand-off), search_web_grounded        │
+    │   │    └─ sourcing_agent (delegation), search_web_grounded          │
     │   └──────────────────────────────────────────────────────────────────┘
     │
     │   tool_error_to_json — exceptions → status:error (non-fatal)
@@ -77,9 +77,9 @@ Supervisor + 3 specialist pattern. Each specialist runs as an independent ReAct 
 | **Supervisor** | Query routing, specialist coordination, final answer synthesis, owns clarification | ask_user_clarification + 3 specialist tools | Gemini 3.5 Flash |
 | **Sourcing Agent** | Inventory, pricing, where-to-buy — parallel calls to all 6 retail chains every time | 6 retailer tools | Gemini 3.5 Flash |
 | **Sommelier Agent** | Pairing recs, drinks knowledge, reviews/scores (Google grounding, with citations) | reasoning_pair_wine, search_web_grounded | Gemini 3.1 Pro Preview |
-| **Menu Architect** | (B2B) Design beverage menu from food menu → source real products/prices (A2A delegation) | sourcing_agent (A2A), search_web_grounded | Gemini 3.1 Pro Preview |
+| **Menu Architect** | (B2B) Design beverage menu from food menu → source real products/prices (direct delegation to Sourcing) | sourcing_agent, search_web_grounded | Gemini 3.1 Pro Preview |
 
-**Agent-to-Agent (A2A)**: Menu Architect calls `sourcing_agent_tool` directly to source real Vancouver retail products and prices after designing the menu. Direct delegation without Supervisor mediation.
+**Specialist-to-specialist delegation**: The Menu Architect calls `sourcing_agent_tool` directly to source real Vancouver retail products and prices after designing the menu — an in-process hand-off between specialists, without Supervisor mediation. (This is internal LangGraph delegation, not the A2A wire protocol.)
 
 **Multi-turn enforcement**: The Supervisor prompt enforces specialist routing on every turn — when a follow-up asks for a new product category or new recommendations ("also recommend beer", "what about spirits"), it must route to the relevant specialist rather than answering from training knowledge. The "Never invent" rule applies equally on every turn.
 
@@ -193,7 +193,7 @@ Detailed architecture design is documented in [`docs/AGENT_DESIGN.md`](docs/AGEN
 | **Sutton Place Wine Merchant** | `tools/suttonplace_tool.py` | JSON API | — |
 | **Marquis Wine Cellars** | `tools/marquis_tool.py` | JSON API | — |
 | **Legacy Liquor Store** | `tools/legacy_tool.py` | GraphQL API | — |
-| **Google Search grounding** | `tools/google_search_tool.py` | Gemini native grounding (Vertex AI) | — (ADC) |
+| **Google Search grounding** | `tools/google_search_tool.py` | Gemini native grounding (Gemini Enterprise Agent Platform) | — (ADC) |
 
 ---
 
@@ -269,7 +269,7 @@ results = await search_everything_wine("synchromesh")
 
 ### 7. Google Search Grounding (`tools/google_search_tool.py`)
 
-Knowledge and review search using Gemini's native Google Search grounding. Runs on Vertex AI credentials (ADC) with no extra API key required.
+Knowledge and review search using Gemini's native Google Search grounding. Runs on Gemini Enterprise Agent Platform credentials (ADC) with no extra API key required.
 
 - **Data**: grounded answer + source URL list
 - **Use cases**: drinks education, region/producer info, reviews/scores (citation + summary only, no full-text reproduction), supplementing gaps in store tool results
@@ -303,7 +303,7 @@ BC-wine-ai-agents/
 │   ├── react_subagent.py       # Shared ReAct sub-graph builder + run_subagent_json wrapper
 │   ├── sourcing_agent.py       # Sourcing Agent — parallel search across 6 retail chains
 │   ├── sommelier_agent.py      # Sommelier Agent — pairing + grounding
-│   └── menu_architect.py       # Menu Architect — B2B beverage menu design (A2A)
+│   └── menu_architect.py       # Menu Architect — B2B beverage menu design (delegates to Sourcing)
 ├── tools/                      # Data collection tools
 │   ├── __init__.py
 │   ├── bcliquor_tool.py        # BC Liquor Store search
@@ -420,7 +420,7 @@ gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agen
 - **LangGraph** — multi-agent Supervisor + 3 specialist sub-graph orchestration
 - **Gemini 3.5 Flash** — Supervisor, Sourcing Agent, validation, vision node
 - **Gemini 3.1 Pro Preview** — Sommelier Agent, Menu Architect (advanced reasoning)
-- **Google Search grounding** — reviews/scores/factual knowledge (Vertex AI native)
+- **Google Search grounding** — reviews/scores/factual knowledge (Gemini Enterprise Agent Platform native)
 - **FastAPI** — SSE streaming backend
 - **HTML/CSS/JS** — wine-colored chat UI (vanilla, no build step)
 - **Google Cloud Run** — backend container hosting

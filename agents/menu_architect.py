@@ -18,7 +18,7 @@ from agents.sourcing_agent import sourcing_agent_tool
 
 # Collaborators: the Menu Architect designs pairings with its own expertise, calls
 # search_web_grounded_tool for ideas/facts, and hands real-product sourcing to the
-# Sourcing specialist (A2A within the multi-agent system).
+# Sourcing specialist (in-process delegation within the multi-agent system).
 MENU_ARCHITECT_TOOLS = [
     sourcing_agent_tool,
     search_web_grounded_tool,

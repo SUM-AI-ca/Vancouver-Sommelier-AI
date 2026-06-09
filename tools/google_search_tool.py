@@ -1,6 +1,6 @@
 """Google Search grounding tool — replaces the prior web-search fallback.
 
-Uses Gemini's native Google Search grounding (Vertex AI) to answer knowledge / review
+Uses Gemini's native Google Search grounding (Gemini Enterprise Agent Platform) to answer knowledge / review
 questions with up-to-date, cited information, and returns the source URLs Gemini
 grounded on so the agent can attribute and link every claim.
 
@@ -8,7 +8,7 @@ Copyright guardrail: this tool surfaces SOURCE LINKS + brief grounded summaries 
 Callers (prompts) must attribute any published review/score to its publication and
 summarize — never reproduce full proprietary review or tasting-note text verbatim.
 
-Grounding uses the same Vertex AI credentials as the rest of the app (no extra key).
+Grounding uses the same Gemini Enterprise Agent Platform credentials as the rest of the app (no extra key).
 """
 from __future__ import annotations
 

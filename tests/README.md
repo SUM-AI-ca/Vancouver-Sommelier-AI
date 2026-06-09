@@ -17,7 +17,7 @@ Output lands in `tests/results/<YYYYMMDD-HHMMSS>/` (gitignored).
 
 ```bash
 # From project root
-gcloud auth application-default login        # Vertex AI ADC for Gemini
+gcloud auth application-default login        # Gemini Enterprise Agent Platform ADC for Gemini
 ```
 
 The runner prints warnings for anything missing but doesn't block — the rest of the suite continues.
