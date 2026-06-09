@@ -284,7 +284,7 @@ results, answer = await search_web_grounded("best food pairings for BC Pinot Noi
 ## Project Structure
 
 ```
-BC-wine-ai-agents/
+Vancouver-Sommelier-AI/
 ├── agent.py                    # LangGraph Supervisor graph (entry_router + vision + supervisor ↔ tools)
 ├── agent_tools.py              # @tool wrappers + specialist groups (SOURCING / SOMMELIER / SUPERVISOR_DIRECT)
 ├── app.py                      # FastAPI backend (SSE streaming, CORS, multimodal input, validation gate)
@@ -344,8 +344,8 @@ BC-wine-ai-agents/
 ### Installation
 
 ```bash
-git clone https://github.com/SUM-AI-ca/BC-wine-ai-agents.git
-cd BC-wine-ai-agents
+git clone https://github.com/SUM-AI-ca/Vancouver-Sommelier-AI.git
+cd Vancouver-Sommelier-AI
 
 python -m venv venv
 source venv/bin/activate  # Mac/Linux
