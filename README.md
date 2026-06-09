@@ -183,8 +183,6 @@ Implementation: `tool_error_to_json` in [`safety.py`](safety.py) + ToolNode wiri
 - **Request timeout + error recovery** — 6-minute `AbortController` timeout prevents infinite spinner on backend hangs. Non-200 responses (429 rate limit, 5xx errors) are caught before SSE parsing with user-facing error messages. A `finally` safety net resets the spinner if the stream ends without a `done` event. The backend also emits `done` after `error` events for protocol completeness.
 - **Links open in new tab** — all `<a>` tags from `marked.parse` get `target="_blank" rel="noopener noreferrer"` injected automatically.
 
-Detailed architecture design is documented in [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md).
-
 ---
 
 ## Data Sources
@@ -324,8 +322,7 @@ Vancouver-Sommelier-AI/
 │   ├── app.js                  # SSE client, CORS API_BASE, image attachment, tool badges, markdown
 │   └── _worker.js              # Cloudflare Workers proxy (API routing + security filtering)
 ├── scripts/                    # Utility scripts
-│   ├── debug_everythingwine.py # Everything Wine HTML structure debugging
-│   └── test_gemini_models.py   # Gemini model comparison test
+│   └── debug_everythingwine.py # Everything Wine HTML structure debugging
 ├── draw_graph.py               # Architecture Mermaid diagram generator
 ├── tests/                      # Golden-query quality evaluation
 │   ├── golden_queries.py       # Golden queries (multiple categories)
@@ -334,7 +331,6 @@ Vancouver-Sommelier-AI/
 │   ├── quality_eval.py         # Runner — produces results.json + summary.md + transcripts
 │   └── results/<timestamp>/    # Per-run outputs (gitignored)
 ├── docs/
-│   ├── AGENT_DESIGN.md         # Full architecture design doc + iteration history
 │   └── VISION_NODE_DESIGN.md   # Vision node design (as-built)
 ├── .env                        # API keys (gitignored)
 ├── .gitignore
