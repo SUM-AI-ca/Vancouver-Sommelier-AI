@@ -24,17 +24,16 @@ graph TD
     RL{"Rate Limiter"}
     API --> PS --> RL
 
-    VAL["Validation Gate<br/>Gemini 3.5 Flash"]
-    RL -- "text" --> VAL
-    VAL -- "invalid" --> REJ(["Rejection"])
-    REJ --> FE
-
     RESUME{"Pending interrupt?"}
-    VAL -- "valid" --> RESUME
-    RL -- "image" --> RESUME
+    RL --> RESUME
 
-    RESUME -- "new turn" --> ER
-    RESUME -- "resume" --> ER
+    VAL["Validation Gate<br/>Gemini 3.5 Flash"]
+    REJ(["Rejection"])
+    RESUME -- "new turn · text" --> VAL
+    RESUME -- "new turn · image" --> ER
+    VAL -- "invalid" --> REJ
+    REJ --> FE
+    VAL -- "valid" --> ER
 
     ER{"entry_router"}
     VIS["Vision Node<br/>Gemini 3.5 Flash"]
@@ -43,6 +42,7 @@ graph TD
     SUP["Supervisor<br/>Gemini 3.5 Flash · max 7 rounds"]
     VIS --> SUP
     ER -- "text" --> SUP
+    RESUME -. "resume · clarification reply" .-> SUP
 
     MEM[("InMemorySaver<br/>thread_id state")]
     SUP -. "checkpoint" .-> MEM

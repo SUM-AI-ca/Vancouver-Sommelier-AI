@@ -125,6 +125,10 @@ Cloudflare Pages project settings:
 
 Before the graph is invoked, `/api/chat` runs a single Gemini Flash classification call to determine whether the query falls within the agent's scope (drinks / pairing / greetings). Off-topic queries (weather, sports, coding, etc.) bypass the graph entirely and return a short rejection message via SSE tokens **in the user's language**. If the validation LLM fails, it fails open and enters the normal agent path. Measured off-topic response time: ~2.6s (previously ~10s+).
 
+**When the gate is bypassed.** It runs only on new text turns (`not is_resume and not req.images`). Two cases skip it by design:
+- **Image turns** — the validator only reads text, so an image with little or no caption would false-trip it. Scope is enforced downstream instead: `vision_node` tags non-drink photos as `document_type="other"` and the Supervisor (Guideline G7) declines them politely.
+- **Clarification replies (resume)** — a short in-context answer like "$50" or "the cheaper one" could be misread as off-topic, so the gate is skipped when resuming a pending interrupt.
+
 Implementation: [`validation.py`](validation.py), `VALIDATION_SYSTEM_PROMPT` in [`prompts.py`](prompts.py), gate in [`app.py`](app.py).
 
 ### Human-in-the-Loop Clarification
