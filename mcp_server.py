@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from safety import tool_error_to_json
 from tools.bcliquor_tool import search_bcliquor
@@ -36,6 +37,12 @@ mcp = FastMCP(
     # parallel fan-out, where each tool call runs in its own short-lived session.
     stateless_http=True,
     json_response=True,
+    # FastMCP auto-enables DNS-rebinding protection (Host-header allowlist of
+    # localhost only) when its host setting is 127.0.0.1 — that 421s every
+    # request on Cloud Run, where Host is the *.run.app domain. The protection
+    # targets browser attacks on local servers; this endpoint is a public HTTPS
+    # service whose access control is the X-Proxy-Secret middleware in app.py.
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 # structured_output=False on every tool: the return value is already a JSON string
