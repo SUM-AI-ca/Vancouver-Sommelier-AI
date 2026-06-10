@@ -637,11 +637,11 @@ def _preflight_check() -> list[str]:
             google.auth.default()
         except Exception as e:
             warnings.append(
-                f"Vertex AI credentials not resolvable (`{type(e).__name__}: {e}`). "
+                f"Gemini Enterprise Agent Platform credentials not resolvable (`{type(e).__name__}: {e}`). "
                 "Run `gcloud auth application-default login` before kicking off the eval."
             )
     except ImportError:
-        warnings.append("google-auth not installed — cannot pre-check Vertex AI credentials.")
+        warnings.append("google-auth not installed — cannot pre-check Gemini Enterprise Agent Platform credentials.")
 
     return warnings
 

@@ -1,9 +1,11 @@
 """LLM factory for Vancouver Drinks AI — Gemini via Gemini Enterprise Agent Platform (formerly Vertex AI)."""
 
+import os
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-PROJECT = "wine-agent-jh-2026"
-LOCATION = "global"
+PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "wine-agent-jh-2026")
+LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "global")
 MODEL = "gemini-3.5-flash"
 JUDGE_MODEL = "gemini-3.1-pro-preview"
 
