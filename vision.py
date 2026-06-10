@@ -6,7 +6,7 @@ restaurant **wine list** — and transcribes what is printed into a structured r
 `format_extraction` text into the user turn so the (text-only) orchestrator can search
 and recommend with its existing tools.
 
-Design notes live in docs/VISION_NODE_DESIGN.md. Two rules drive the schema:
+Two rules drive the schema:
   1. Never invent — every field is optional; unknown/illegible ⇒ null.
   2. Never lose info — verbatim catch-alls (`other_text`, each item's `raw_text`)
      guarantee that anything visible survives even if it doesn't fit a named field.
