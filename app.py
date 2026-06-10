@@ -60,7 +60,20 @@ async def lifespan(_app: FastAPI):
         yield
 
 
-limiter = Limiter(key_func=get_remote_address)
+def _client_ip(request: Request) -> str:
+    """Rate-limit key: the real visitor IP. Behind the Cloudflare Worker proxy
+    the TCP peer is the proxy, so get_remote_address would put every visitor in
+    one shared bucket. X-Client-IP is set by the Worker (and only the Worker —
+    verify_proxy_secret rejects requests that bypass it, and the Worker strips
+    any client-sent value)."""
+    return (
+        request.headers.get("X-Client-IP")
+        or (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        or get_remote_address(request)
+    )
+
+
+limiter = Limiter(key_func=_client_ip)
 app = FastAPI(title="Vancouver Drinks AI", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -383,7 +396,7 @@ def _extract_token_texts(chunk) -> list[str]:
 
 
 @app.post("/api/chat")
-@limiter.limit("20/hour")
+@limiter.limit("30/hour")
 async def chat(req: ChatRequest, request: Request):
     if not await _verify_turnstile(req.cf_turnstile_token, request):
         return JSONResponse(status_code=403, content={"error": "Bot verification failed"})

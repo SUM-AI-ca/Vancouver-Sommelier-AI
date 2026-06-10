@@ -27,6 +27,15 @@ export default {
         headers.set("X-Proxy-Secret", env.PROXY_SECRET);
       }
 
+      // Forward the visitor's real IP for per-user rate limiting: the backend
+      // only sees this Worker as the TCP peer. Delete first so a client-sent
+      // X-Client-IP can never pass through.
+      headers.delete("X-Client-IP");
+      const clientIp = request.headers.get("CF-Connecting-IP");
+      if (clientIp) {
+        headers.set("X-Client-IP", clientIp);
+      }
+
       const init = { method: request.method, headers };
       if (request.method !== "GET" && request.method !== "HEAD") {
         init.body = request.body;
