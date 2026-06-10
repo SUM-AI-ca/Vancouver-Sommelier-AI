@@ -27,7 +27,6 @@
             guidance, all in one conversation.
         </p>
         <button class="btn-primary btn-large" id="open-chat">Start chatting</button>
-        <div id="turnstile-container" style="display:flex;justify-content:center;margin-top:1rem"></div>
     </section>
 
     <section class="capabilities container">
@@ -92,9 +91,6 @@
     </div>
 </div>
 
-<!-- Turnstile api.js is injected by app.js (loadTurnstile) only in production,
-     after window.initTurnstile is defined — avoids the async onload race and
-     skips the widget entirely on localhost. -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="app.js"></script>
 </body>

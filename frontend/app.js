@@ -2,58 +2,6 @@
 
 const API_BASE = "";
 
-const TURNSTILE_SITE_KEY = "0x4AAAAAACk40fbVxvRdolMx";
-// Turnstile site keys are domain-bound and won't issue a token on localhost, which
-// stalls the send. Skip the widget in local dev; production (real hostname) is unchanged.
-// The backend already bypasses verification when CF_TURNSTILE_SECRET is unset (local).
-const TURNSTILE_DISABLED = ["localhost", "127.0.0.1", "0.0.0.0", ""].includes(location.hostname);
-let turnstileToken = null;
-let turnstileWidgetId = null;
-
-// Inject the Cloudflare Turnstile script only in production, after window.initTurnstile
-// is defined. Loading it statically with ?onload=initTurnstile raced app.js (the async
-// script could fire its onload before initTurnstile existed -> "Unable to find onload
-// callback" error). On localhost we never load it, so the widget is fully skipped.
-function loadTurnstile() {
-  if (TURNSTILE_DISABLED) return;
-  if (document.querySelector("script[data-turnstile]")) return;
-  window.initTurnstile = initTurnstile;
-  const s = document.createElement("script");
-  s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=initTurnstile";
-  s.async = true;
-  s.defer = true;
-  s.setAttribute("data-turnstile", "");
-  document.head.appendChild(s);
-}
-
-function initTurnstile() {
-  if (TURNSTILE_DISABLED) return;
-  if (typeof turnstile === "undefined" || document.getElementById("cf-turnstile")) return;
-  const container = document.getElementById("turnstile-container");
-  if (!container) return;
-  turnstileWidgetId = turnstile.render(container, {
-    sitekey: TURNSTILE_SITE_KEY,
-    callback: (token) => { turnstileToken = token; },
-    "refresh-expired": "auto",
-    size: "normal",
-  });
-}
-
-async function getTurnstileToken() {
-  if (TURNSTILE_DISABLED) return null;
-  if (typeof turnstile === "undefined") return null;
-  for (let i = 0; i < 20; i++) {
-    if (turnstileToken) {
-      const token = turnstileToken;
-      turnstileToken = null;
-      turnstile.reset(turnstileWidgetId);
-      return token;
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return null;
-}
-
 const AGENT_TOOL_NAMES = new Set([
   "sourcing_agent_tool",
   "sommelier_agent_tool",
@@ -113,8 +61,6 @@ async function openChat() {
   await ensureSession();
   setTimeout(() => inputEl.focus(), 0);
 }
-
-loadTurnstile();
 
 function closeChat() {
   overlay.classList.remove("active");
@@ -495,25 +441,16 @@ async function sendMessage() {
   const timeoutId = setTimeout(() => abortCtrl.abort(), 360_000);
 
   try {
-    async function doChat() {
-      const cfToken = await getTurnstileToken();
-      return fetch(`${API_BASE}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          thread_id: threadId,
-          message: text,
-          images: images.length ? images : undefined,
-          cf_turnstile_token: cfToken,
-        }),
-        signal: abortCtrl.signal,
-      });
-    }
-
-    let res = await doChat();
-    if (res.status === 403) {
-      res = await doChat();
-    }
+    const res = await fetch(`${API_BASE}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        thread_id: threadId,
+        message: text,
+        images: images.length ? images : undefined,
+      }),
+      signal: abortCtrl.signal,
+    });
 
     if (!res.ok) {
       const errText = res.status === 429
