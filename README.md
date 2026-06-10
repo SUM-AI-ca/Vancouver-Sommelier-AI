@@ -20,14 +20,14 @@ Google Cloud Run — FastAPI backend (app.py — SSE streaming)
     ↓
 Proxy Secret check (Cloudflare) → Rate Limiter (slowapi)
     ↓
+Pending interrupt? ──(yes — resume reply)──→ Command(resume=...) ─┐
+    │(no — new turn)                                              │
+    ↓                                                             │
 Validation Gate (validation.py — Gemini Flash)   ※ bypassed when image attached
-    │
-    ├─ INVALID → reject in user's language → SSE done → end
-    │
-    └─ VALID ↓
-Pending interrupt? ──(yes)──→ Command(resume=reply)
-    │(no — new turn)                    │
-    ↓                                   ↓
+    │                                                             │
+    ├─ INVALID → reject in user's language → SSE done → end       │
+    │                                                             │
+    └─ VALID ↓                                                    ↓
 LangGraph Supervisor (agent.py — Gemini 3.5 Flash, max 7 tool rounds)
     │
     │   entry_router ─(image)──→ vision_node ─┐
