@@ -10,13 +10,18 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
 
-    if (url.pathname.startsWith("/api/")) {
+    const isApi = url.pathname.startsWith("/api/");
+    const isMcp = url.pathname === "/mcp" || url.pathname.startsWith("/mcp/");
+    if (isApi || isMcp) {
       const backend = env.BACKEND_URL;
       if (!backend) {
         return new Response("Backend not configured", { status: 502 });
       }
 
-      const target = `${backend}${url.pathname}${url.search}`;
+      // Normalize /mcp -> /mcp/ here: the backend would otherwise 307-redirect
+      // with the Cloud Run host in Location, bypassing this proxy.
+      const targetPath = url.pathname === "/mcp" ? "/mcp/" : url.pathname;
+      const target = `${backend}${targetPath}${url.search}`;
       const headers = new Headers(request.headers);
       if (env.PROXY_SECRET) {
         headers.set("X-Proxy-Secret", env.PROXY_SECRET);

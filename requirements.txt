@@ -9,3 +9,7 @@ langchain-core
 langchain-google-genai
 langsmith
 slowapi
+# MCP — pinned: the integration relies on version-specific behavior
+# (content-block tool results, FastMCP streamable_http_path/stateless_http).
+mcp==1.27.2
+langchain-mcp-adapters==0.2.2

@@ -3,7 +3,7 @@
 > Built for 2026 Google for Startups AI Agents Challenge — Track 1: Build
 
 A multi-agent AI drinks concierge for the Vancouver market. Built on a LangGraph Supervisor + 3 specialist agent architecture, it searches real-time inventory and pricing across 6 Vancouver-area retail chains (including BC Liquor Stores' 200+ locations and Everything Wine's 4 Lower Mainland stores), provides expert knowledge via Google Search grounding, and offers food pairing guidance. Supports both B2C (consumer recommendations) and B2B (beverage menu design for F&B businesses).
-Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), FastAPI real-time SSE token streaming, multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, request timeout + error recovery, LLM-as-judge quality eval pipeline.
+Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), retailer tools served over **MCP (Model Context Protocol)** with a public endpoint at `wineaiagent.com/mcp`, FastAPI real-time SSE token streaming, multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, request timeout + error recovery, LLM-as-judge quality eval pipeline.
 
 ---
 
@@ -42,8 +42,10 @@ LangGraph Supervisor (agent.py — Gemini 3.5 Flash, max 7 tool rounds)
     │   │  Specialist Agents (independent ReAct sub-graphs)                │
     │   │                                                                  │
     │   │  Sourcing Agent ──── 6 retailers in parallel (max 4 rounds)      │
-    │   │    └─ bcliquor, everythingwine, okanagan_cellars,               │
-    │   │       suttonplace, marquis, legacy                              │
+    │   │    └─ MCP client → MCP Server "vancouver-retailers" (/mcp)       │
+    │   │         └─ bcliquor, everythingwine, okanagan_cellars,          │
+    │   │            suttonplace, marquis, legacy                         │
+    │   │       (public Streamable HTTP endpoint: wineaiagent.com/mcp)     │
     │   │                                                                  │
     │   │  Sommelier Agent ── pairing + grounding (max 4 rounds)           │
     │   │    └─ reasoning_pair_wine, search_web_grounded                  │
@@ -75,13 +77,40 @@ Supervisor + 3 specialist pattern. Each specialist runs as an independent ReAct 
 | Agent | Role | Tools | Model |
 |-------|------|-------|-------|
 | **Supervisor** | Query routing, specialist coordination, final answer synthesis, owns clarification | ask_user_clarification + 3 specialist tools | Gemini 3.5 Flash |
-| **Sourcing Agent** | Inventory, pricing, where-to-buy — parallel calls to all 6 retail chains every time | 6 retailer tools | Gemini 3.5 Flash |
+| **Sourcing Agent** | Inventory, pricing, where-to-buy — parallel calls to all 6 retail chains every time | 6 retailer tools (via MCP) | Gemini 3.5 Flash |
 | **Sommelier Agent** | Pairing recs, drinks knowledge, reviews/scores (Google grounding, with citations) | reasoning_pair_wine, search_web_grounded | Gemini 3.1 Pro Preview |
 | **Menu Architect** | (B2B) Design beverage menu from food menu → source real products/prices (direct delegation to Sourcing) | sourcing_agent, search_web_grounded | Gemini 3.1 Pro Preview |
 
 **Specialist-to-specialist delegation**: The Menu Architect calls `sourcing_agent_tool` directly to source real Vancouver retail products and prices after designing the menu — an in-process hand-off between specialists, without Supervisor mediation. (This is internal LangGraph delegation, not the A2A wire protocol.)
 
 **Multi-turn enforcement**: The Supervisor prompt enforces specialist routing on every turn — when a follow-up asks for a new product category or new recommendations ("also recommend beer", "what about spirits"), it must route to the relevant specialist rather than answering from training knowledge. The "Never invent" rule applies equally on every turn.
+
+---
+
+## MCP — Model Context Protocol
+
+The six retailer search tools are not bound to the agent in-process — they are served by a dedicated **MCP server** and consumed over the protocol.
+
+**Server — `vancouver-retailers`** ([`mcp_server.py`](mcp_server.py)). A FastMCP server (Streamable HTTP, stateless, JSON responses) exposing the 6 retailer tools with the exact same names, schemas, and JSON result envelopes as the legacy in-process wrappers. Mounted by `app.py` at `/mcp`, so one Cloud Run container serves both the chat API and the MCP endpoint.
+
+**Client — the Sourcing Agent itself** ([`mcp_client.py`](mcp_client.py)). At first use, the Sourcing Agent loads its toolset from the MCP server via `langchain-mcp-adapters` (`MultiServerMCPClient`, `streamable_http` transport) — a self-connection to the mounted endpoint. Each tool invocation opens its own short-lived MCP session, so the agent's **all-6-retailers-in-parallel fan-out stays fully parallel** over the protocol. If the endpoint is unreachable (e.g. running the eval harness without the server), the loader logs an ERROR and falls back to the in-process tools — same tools, different transport.
+
+**Public endpoint — `https://wineaiagent.com/mcp`.** The Cloudflare worker proxies `/mcp` to Cloud Run (injecting the proxy secret), so any external MCP client — MCP Inspector, Claude Desktop, ADK agents — can discover and call the same retailer tools the agent uses:
+
+```bash
+npx @modelcontextprotocol/inspector
+# Transport: "Streamable HTTP" → URL: https://wineaiagent.com/mcp
+# → tools/list shows the 6 retailer tools → call any of them live
+```
+
+Security model: direct Cloud Run access to `/mcp` (like `/api/*`) is rejected without the `X-Proxy-Secret` header that only the Cloudflare worker injects. The tools are read-only searches over each retailer's public product-discovery endpoints.
+
+| Env var | Default | Meaning |
+|---------|---------|---------|
+| `SOURCING_VIA_MCP` | `1` | `0` forces the legacy in-process tools (kill switch) |
+| `MCP_SELF_URL` | `http://127.0.0.1:${PORT:-8080}/mcp/` | Where the Sourcing Agent's MCP client connects |
+
+Standalone server (without the FastAPI app): `python mcp_server.py` → `http://127.0.0.1:3001/`. Smoke test: `python scripts/mcp_smoke.py` (asserts the 6 tools load over MCP and a live call returns the expected envelope).
 
 ---
 
@@ -201,6 +230,8 @@ Implementation: `tool_error_to_json` in [`safety.py`](safety.py) + ToolNode wiri
 
 ## Tool Details
 
+The six retailer tools below are exposed to the Sourcing Agent (and to external clients) through the `vancouver-retailers` MCP server — see [MCP](#mcp--model-context-protocol). The `tools/*.py` modules hold the underlying search implementations.
+
 ### 1. BC Liquor Store (`tools/bcliquor_tool.py`)
 
 BC's government liquor retailer (200+ locations). Carries wine, beer, spirits, and cider.
@@ -289,7 +320,9 @@ results, answer = await search_web_grounded("best food pairings for BC Pinot Noi
 Vancouver-Sommelier-AI/
 ├── agent.py                    # LangGraph Supervisor graph (entry_router + vision + supervisor ↔ tools)
 ├── agent_tools.py              # @tool wrappers + specialist groups (SOURCING / SOMMELIER / SUPERVISOR_DIRECT)
-├── app.py                      # FastAPI backend (SSE streaming, CORS, multimodal input, validation gate)
+├── app.py                      # FastAPI backend (SSE streaming, CORS, multimodal input, validation gate, /mcp mount)
+├── mcp_server.py               # MCP server "vancouver-retailers" — 6 retailer tools over Streamable HTTP
+├── mcp_client.py               # Sourcing Agent's MCP tool loader (self-connection + in-process fallback)
 ├── validation.py               # Pre-agent query validation (off-topic bypass)
 ├── vision.py                   # Multimodal label/wine-list/food-menu extraction (VisionExtraction schema)
 ├── state.py                    # AgentState TypedDict (messages + tool_call_log + vision_extractions)
@@ -322,7 +355,8 @@ Vancouver-Sommelier-AI/
 │   ├── app.js                  # SSE client, CORS API_BASE, image attachment, tool badges, markdown
 │   └── _worker.js              # Cloudflare Workers proxy (API routing + security filtering)
 ├── scripts/                    # Utility scripts
-│   └── debug_everythingwine.py # Everything Wine HTML structure debugging
+│   ├── debug_everythingwine.py # Everything Wine HTML structure debugging
+│   └── mcp_smoke.py            # MCP smoke test (tools load + live call over the protocol)
 ├── draw_graph.py               # Architecture Mermaid diagram generator
 ├── tests/                      # Golden-query quality evaluation
 │   ├── golden_queries.py       # Golden queries (multiple categories)
@@ -390,10 +424,12 @@ python -m tools.everythingwine_tool
 ### Local Development
 
 ```bash
-python -m uvicorn app:app --port 8000
+python -m uvicorn app:app --port 8080
 ```
 
-Open `http://localhost:8000` in a browser to access the chat UI.
+Open `http://localhost:8080` in a browser to access the chat UI.
+
+Port 8080 matches the default `MCP_SELF_URL` (`http://127.0.0.1:8080/mcp/`), so the Sourcing Agent loads its tools over MCP locally too. On a different port, set `MCP_SELF_URL` accordingly — otherwise the loader logs an ERROR and falls back to direct in-process tools (everything still works; only the transport differs).
 
 ### Docker (Local)
 
@@ -418,6 +454,7 @@ gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agen
 ## Tech Stack
 
 - **LangGraph** — multi-agent Supervisor + 3 specialist sub-graph orchestration
+- **MCP (Model Context Protocol)** — FastMCP server `vancouver-retailers` (mcp==1.27.2) serving the 6 retailer tools over Streamable HTTP; consumed by the Sourcing Agent via **langchain-mcp-adapters** (0.2.2); public endpoint at `wineaiagent.com/mcp`
 - **Gemini 3.5 Flash** — Supervisor, Sourcing Agent, validation, vision node
 - **Gemini 3.1 Pro Preview** — Sommelier Agent, Menu Architect (advanced reasoning)
 - **Google Search grounding** — reviews/scores/factual knowledge (Gemini Enterprise Agent Platform native)

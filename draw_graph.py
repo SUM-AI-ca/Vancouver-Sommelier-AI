@@ -69,23 +69,32 @@ graph TD
 
     subgraph SRC ["Sourcing · ReAct · max 4 rounds"]
         SRC_A["Gemini 3.5 Flash"]
-        SRC_T["ToolNode"]
+        SRC_T["ToolNode · MCP client"]
         SRC_R(["return"])
         SRC_A -- "6 stores parallel" --> SRC_T --> SRC_A
         SRC_A -- "done" --> SRC_R
+    end
+
+    MCPS["MCP Server · vancouver-retailers<br/>/mcp · Streamable HTTP"]
+    SRC_T -- "MCP tools/call · 6 parallel" --> MCPS
+
+    EXTMCP(["External MCP clients<br/>MCP Inspector · Claude · ADK"])
+    EXTMCP -. "wineaiagent.com/mcp" .-> MCPS
+
+    subgraph STORES ["6 Vancouver retail chains"]
         BCL["BC Liquor"]
         EW["Everything Wine"]
         OKC["Okanagan Cellars"]
         STP["Sutton Place"]
         MRQ["Marquis Wine"]
         LGC["Legacy Liquor"]
-        SRC_T -.-> BCL
-        SRC_T -.-> EW
-        SRC_T -.-> OKC
-        SRC_T -.-> STP
-        SRC_T -.-> MRQ
-        SRC_T -.-> LGC
     end
+    MCPS -.-> BCL
+    MCPS -.-> EW
+    MCPS -.-> OKC
+    MCPS -.-> STP
+    MCPS -.-> MRQ
+    MCPS -.-> LGC
 
     subgraph MA ["Menu Architect · ReAct · max 5 rounds · B2B"]
         MA_A["Gemini 3.1 Pro Preview"]
@@ -120,11 +129,13 @@ graph TD
     classDef tool fill:#cce5ff,stroke:#004085,color:#004085
     classDef infra fill:#f8d7da,stroke:#721c24,color:#721c24
     classDef store fill:#e2e3e5,stroke:#383d41,color:#383d41
+    classDef mcp fill:#e7d8f7,stroke:#5a2d82,color:#5a2d82
     class VAL,RL,PS,RESUME gate
     class SUP,SOM_A,SRC_A,MA_A,VIS agent
     class CLAR,RPW,SWG1,MA_SRC,MA_SWG tool
     class BCL,EW,OKC,STP,MRQ,LGC store
     class ERR,LS infra
+    class MCPS,EXTMCP mcp
 """
 
 

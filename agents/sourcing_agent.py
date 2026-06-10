@@ -1,14 +1,18 @@
 """Sourcing Agent — inventory, pricing, and where-to-buy across the Vancouver market.
 
-Owns the six retail store tools. Runs as an independent ReAct sub-graph and is
+Owns the six retail store tools, consumed over MCP from the `vancouver-retailers`
+server (mcp_server.py via mcp_client.py; falls back to in-process tools if the
+MCP endpoint is unreachable). Runs as an independent ReAct sub-graph and is
 surfaced to the Supervisor as one `@tool`: `sourcing_agent_tool(request)`.
 """
 from __future__ import annotations
 
+import asyncio
+
 from langchain_core.tools import tool
 
-from agent_tools import SOURCING_TOOLS
 from agents.react_subagent import build_react_subagent, run_subagent_json
+from mcp_client import load_sourcing_tools
 
 SOURCING_SYSTEM_PROMPT = """\
 You are the Sourcing specialist for a Vancouver drinks concierge. Given a
@@ -45,12 +49,18 @@ Supervisor can fold into its final answer.
 """
 
 _graph = None
+_graph_lock = asyncio.Lock()
 
 
-def _get_graph():
+async def _get_graph():
+    # Built lazily on the first sourcing call — at that point the app's /mcp
+    # endpoint is already serving, so the MCP self-connection can succeed.
     global _graph
     if _graph is None:
-        _graph = build_react_subagent(SOURCING_SYSTEM_PROMPT, SOURCING_TOOLS, max_rounds=4)
+        async with _graph_lock:
+            if _graph is None:
+                tools = await load_sourcing_tools()
+                _graph = build_react_subagent(SOURCING_SYSTEM_PROMPT, tools, max_rounds=4)
     return _graph
 
 
@@ -61,4 +71,4 @@ async def sourcing_agent_tool(request: str) -> str:
     (budget, category). Returns a sourced summary with prices and links; never
     invents stock or prices.
     """
-    return await run_subagent_json(_get_graph(), request, "sourcing_agent")
+    return await run_subagent_json(await _get_graph(), request, "sourcing_agent")

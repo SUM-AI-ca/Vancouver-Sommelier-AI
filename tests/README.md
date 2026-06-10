@@ -22,6 +22,8 @@ gcloud auth application-default login        # Gemini Enterprise Agent Platform 
 
 The runner prints warnings for anything missing but doesn't block — the rest of the suite continues.
 
+**MCP note**: the eval invokes the graph directly (no uvicorn), so the Sourcing Agent's MCP self-connection fails and the loader logs one ERROR before falling back to the identical in-process tools — scores are unaffected. Run with `SOURCING_VIA_MCP=0` to silence the fallback log, or keep the app serving on port 8080 during the eval to exercise the MCP path end-to-end.
+
 ## Run it
 
 All commands from the **project root** (not `tests/`):

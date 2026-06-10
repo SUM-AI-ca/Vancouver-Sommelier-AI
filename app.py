@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 
 import httpx
 from dotenv import load_dotenv
@@ -19,6 +20,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from agent import get_graph
+from mcp_server import mcp as retailer_mcp
 from validation import validate_query
 
 # .env must load BEFORE langchain/langgraph reads tracing env vars at import-time
@@ -49,8 +51,17 @@ _log_langsmith_status()
 
 PROXY_SECRET = os.getenv("PROXY_SECRET", "")
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # streamable_http_app() (mounted at /mcp below) requires the MCP session
+    # manager task group to be running for the app's lifetime.
+    async with retailer_mcp.session_manager.run():
+        yield
+
+
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="Vancouver Drinks AI")
+app = FastAPI(title="Vancouver Drinks AI", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -58,9 +69,9 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 @app.middleware("http")
 async def verify_proxy_secret(request: Request, call_next):
     """Block direct Cloud Run access. Only requests from the Cloudflare
-    Pages Function proxy (which injects X-Proxy-Secret) are accepted.
+    worker proxy (which injects X-Proxy-Secret) are accepted.
     Skipped when PROXY_SECRET is not set (local development)."""
-    if PROXY_SECRET and request.url.path.startswith("/api/"):
+    if PROXY_SECRET and request.url.path.startswith(("/api/", "/mcp")):
         if request.headers.get("X-Proxy-Secret") != PROXY_SECRET:
             return JSONResponse(status_code=403, content={"error": "Direct access not allowed"})
     return await call_next(request)
@@ -561,6 +572,12 @@ async def chat(req: ChatRequest, request: Request):
 async def health():
     return {"ok": True}
 
+
+# MCP endpoint — the vancouver-retailers tool server (mcp_server.py). The Sourcing
+# Agent self-connects here (mcp_client.py); external MCP clients reach it through
+# the Cloudflare worker at https://wineaiagent.com/mcp. Must be mounted before the
+# catch-all "/" static mount.
+app.mount("/mcp", retailer_mcp.streamable_http_app())
 
 if os.path.isdir("frontend"):
     app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
