@@ -363,9 +363,7 @@ Vancouver-Sommelier-AI/
 │   ├── metrics.py              # Deterministic metrics (orchestration, hallucination, coverage, structure)
 │   ├── judge.py                # LLM-as-judge (Gemini 3.1 Pro Preview temp=0)
 │   ├── quality_eval.py         # Runner — produces results.json + summary.md + transcripts
-│   └── results/<timestamp>/    # Per-run outputs (gitignored)
-├── docs/
-│   └── VISION_NODE_DESIGN.md   # Vision node design (as-built)
+│   └── results/<timestamp>/    # Per-run outputs (gitignored; one reference run committed for judging)
 ├── .env                        # API keys (gitignored)
 ├── .gitignore
 └── README.md
