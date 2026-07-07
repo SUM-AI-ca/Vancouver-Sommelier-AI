@@ -49,6 +49,10 @@ let attachedImages = []; // data-URL strings, pending send
 let threadId = null;
 let sending = false;
 let activeTools = 0;
+// The in-flight /api/chat AbortController, lifted to module scope so closing the
+// chat/tab can stop a streaming turn before we delete its thread (otherwise the
+// still-running server graph would re-write the checkpoint we just deleted).
+let currentAbort = null;
 
 const INITIAL_GREETING = "Hi there! Whether you’re building a drink menu for your restaurant, planning an event, or just want something good to drink tonight — I can help. Tell me as much as you can (budget, occasion, guest count, cuisine, flavor preferences) and I’ll find the right picks for you.";
 
@@ -63,8 +67,29 @@ async function openChat() {
 }
 
 function closeChat() {
+  endSession();
   overlay.classList.remove("active");
   document.body.style.overflow = "";
+}
+
+// Tell the backend to drop this thread's checkpoint so it doesn't linger in
+// instance RAM. Best-effort: sendBeacon survives tab/window close; a keepalive
+// fetch is the fallback. Aborts any in-flight stream first so the server graph
+// stops before we delete. thread_id rides in the URL path → no body needed
+// (sendBeacon only issues POST).
+function endSession() {
+  if (currentAbort) {
+    try { currentAbort.abort(); } catch {}
+    currentAbort = null;
+  }
+  const id = threadId;
+  if (!id) return;
+  threadId = null; // prevent a double-send and match the "fresh session per open" design
+  const url = `${API_BASE}/api/session/${encodeURIComponent(id)}/end`;
+  try {
+    if (navigator.sendBeacon && navigator.sendBeacon(url)) return;
+  } catch {}
+  try { fetch(url, { method: "POST", keepalive: true }); } catch {}
 }
 
 function resetConversation() {
@@ -80,6 +105,13 @@ closeBtn.addEventListener("click", closeChat);
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && overlay.classList.contains("active")) closeChat();
+});
+
+// Tab/window close: clean up the current thread. pagehide (not visibilitychange,
+// which also fires on a mere tab switch) is the close signal; skip when persisted
+// is true so a bfcache-restorable page keeps its session.
+window.addEventListener("pagehide", (e) => {
+  if (!e.persisted) endSession();
 });
 
 /* ── Session ─────────────────────────────────────── */
@@ -438,7 +470,8 @@ async function sendMessage() {
   let currentRunId = null;
 
   const abortCtrl = new AbortController();
-  const timeoutId = setTimeout(() => abortCtrl.abort(), 360_000);
+  currentAbort = abortCtrl; // exposed so closeChat()/pagehide can abort this stream
+  const timeoutId = setTimeout(() => abortCtrl.abort(), 3_600_000);
 
   try {
     const res = await fetch(`${API_BASE}/api/chat`, {
@@ -575,6 +608,7 @@ async function sendMessage() {
     setStatus("Error", false);
   } finally {
     clearTimeout(timeoutId);
+    currentAbort = null;
     // Safety net: if the stream ended without a "done" event (e.g. the
     // backend crashed mid-stream), ensure the spinner stops.
     if (statusEl.classList.contains("is-working")) {

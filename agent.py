@@ -63,6 +63,29 @@ def _filter_previous_turns(messages: list) -> list:
     return filtered
 
 
+def _is_blank_response(response) -> bool:
+    """True when an LLM reply carries neither tool calls nor any text.
+
+    Gemini intermittently returns an empty candidate ("Gemini produced an empty
+    response. Continuing with empty message"). On a final-answer round that blank
+    AIMessage has no tool_calls, so should_continue routes to END and the graph
+    finishes with an empty answer — the tool badges show "completed" but the user
+    sees nothing. Callers retry while this is True."""
+    if getattr(response, "tool_calls", None):
+        return False
+    content = getattr(response, "content", None)
+    if isinstance(content, str):
+        return not content.strip()
+    if isinstance(content, list):
+        text = "".join(p.get("text", "") for p in content if isinstance(p, dict))
+        return not text.strip()
+    return not bool(content)
+
+
+# How many extra times to re-invoke the model when it returns a blank response.
+EMPTY_RESPONSE_RETRIES = 3
+
+
 async def orchestrator_node(state: AgentState) -> dict:
     over_budget = _count_tool_rounds_this_turn(state["messages"]) >= MAX_TOOL_ROUNDS
     llm = get_llm(temperature=0.1)
@@ -89,6 +112,12 @@ async def orchestrator_node(state: AgentState) -> dict:
     messages = [system_msg] + _filter_previous_turns(state["messages"])
 
     response = await llm.ainvoke(messages)
+    # Guard Gemini's intermittent empty responses: if the final-answer round comes
+    # back blank, re-invoke a couple of times so the turn never ends with no answer.
+    attempts = 0
+    while _is_blank_response(response) and attempts < EMPTY_RESPONSE_RETRIES:
+        attempts += 1
+        response = await llm.ainvoke(messages)
     return {"messages": [response]}
 
 

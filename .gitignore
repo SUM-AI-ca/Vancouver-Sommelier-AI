@@ -33,15 +33,20 @@ data/checkpoints.db
 # Quality eval runs (timestamped result dirs)
 tests/results/
 
-# Generated diagrams (regenerate with draw_graph.py)
+# Generated diagrams (regenerate with draw_graph.py / draw_graph_v2.py)
 graph.png
 graph_mermaid.md
+graph_v2.png
+graph_v2_mermaid.md
 
 # Internal planning / strategy docs — keep local, exclude from public repo
 agent_challenge/
-# Stale design doc (describes pre-rebuild architecture) + one-off dev script
+submission/
+# Stale design doc (describes pre-rebuild architecture) + one-off dev scripts
 docs/AGENT_DESIGN.md
 scripts/test_gemini_models.py
+scripts/_somm_trace.py
+_tmp_newquery.py
 
 # Claude Code
 .claude/

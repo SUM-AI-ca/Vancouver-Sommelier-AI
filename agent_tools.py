@@ -142,6 +142,10 @@ async def reasoning_pair_wine_tool(dish: str) -> str:
     (wine, beer, spirits, cider, sake, cocktails). Use for non-Western cuisines or complex
     dishes. Do NOT use for common pairings (steak + Cabernet, salmon + Pinot) — answer
     those from built-in knowledge.
+
+    `dish` MUST be a food/dish/cuisine the USER explicitly named. Never call this with a
+    dish inferred or fabricated from a wine or product name — if the user named only a wine
+    (e.g. "synchromesh riesling") with no food, do NOT call this tool at all.
     """
     llm = get_llm(temperature=0.15)
     resp = await llm.ainvoke([

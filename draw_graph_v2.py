@@ -1,12 +1,14 @@
-"""Draw the full multi-agent architecture including all sub-agent internals.
+"""Draw the full multi-agent architecture (same as draw_graph.py).
 
-Usage:   python draw_graph.py
-Output:  graph.png  +  graph_mermaid.md
+Only difference: individual store names are not shown. Instead the MCP
+server is depicted fetching the stores' live data (real-time inventory
+& pricing) on demand.
+
+Usage:   python draw_graph_v2.py
+Output:  graph_v2.png  +  graph_v2_mermaid.md
 """
 import base64
 import os
-import re
-import urllib.parse
 import urllib.request
 
 from dotenv import load_dotenv
@@ -71,30 +73,18 @@ graph TD
         SRC_A["Gemini 3.5 Flash"]
         SRC_T["ToolNode · MCP client"]
         SRC_R(["return"])
-        SRC_A -- "6 stores parallel" --> SRC_T --> SRC_A
+        SRC_A -- "stores in parallel" --> SRC_T --> SRC_A
         SRC_A -- "done" --> SRC_R
     end
 
     MCPS["MCP Server · vancouver-retailers<br/>/mcp · Streamable HTTP"]
-    SRC_T -- "MCP tools/call · 6 parallel" --> MCPS
+    SRC_T -- "MCP tools/call" --> MCPS
 
     EXTMCP(["External MCP clients<br/>MCP Inspector · Claude · ADK"])
     EXTMCP -. "wineaiagent.com/mcp" .-> MCPS
 
-    subgraph STORES ["6 Vancouver retail chains"]
-        BCL["BC Liquor"]
-        EW["Everything Wine"]
-        OKC["Okanagan Cellars"]
-        STP["Sutton Place"]
-        MRQ["Marquis Wine"]
-        LGC["Legacy Liquor"]
-    end
-    MCPS -.-> BCL
-    MCPS -.-> EW
-    MCPS -.-> OKC
-    MCPS -.-> STP
-    MCPS -.-> MRQ
-    MCPS -.-> LGC
+    LIVE[("Stores' live data<br/>real-time inventory & pricing<br/>fetched on demand")]
+    MCPS == "fetches live store data" ==> LIVE
 
     subgraph MA ["Menu Architect · ReAct · max 5 rounds · B2B"]
         MA_A["Gemini 3.1 Pro Preview"]
@@ -133,7 +123,7 @@ graph TD
     class VAL,RL,PS,RESUME gate
     class SUP,SOM_A,SRC_A,MA_A,VIS agent
     class CLAR,RPW,SWG1,MA_SRC,MA_SWG tool
-    class BCL,EW,OKC,STP,MRQ,LGC store
+    class LIVE store
     class ERR,LS infra
     class MCPS,EXTMCP mcp
 """
@@ -148,19 +138,19 @@ def render_png(mermaid_text: str) -> bytes:
 
 
 def main():
-    with open("graph_mermaid.md", "w", encoding="utf-8") as f:
+    with open("graph_v2_mermaid.md", "w", encoding="utf-8") as f:
         f.write(MERMAID)
-    print(f"Mermaid saved -> graph_mermaid.md ({len(MERMAID):,} chars)")
+    print(f"Mermaid saved -> graph_v2_mermaid.md ({len(MERMAID):,} chars)")
 
     try:
         png = render_png(MERMAID)
-        with open("graph.png", "wb") as f:
+        with open("graph_v2.png", "wb") as f:
             f.write(png)
-        print(f"PNG saved -> graph.png ({len(png):,} bytes)")
-        print("Open graph.png to view the full architecture.")
+        print(f"PNG saved -> graph_v2.png ({len(png):,} bytes)")
+        print("Open graph_v2.png to view the full architecture.")
     except Exception as e:
         print(f"PNG render failed ({type(e).__name__}: {e})")
-        print("Paste graph_mermaid.md content into https://mermaid.live to view")
+        print("Paste graph_v2_mermaid.md content into https://mermaid.live to view")
 
 
 if __name__ == "__main__":

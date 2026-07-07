@@ -42,6 +42,16 @@ def build_react_subagent(
             llm = llm.bind_tools(tools)
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
         response = await llm.ainvoke(messages)
+        # Gemini intermittently returns an empty candidate; a blank reply with no
+        # tool_calls would end this specialist with no answer. Retry a couple of times.
+        attempts = 0
+        while (
+            not response.tool_calls
+            and not _flatten_text(response.content).strip()
+            and attempts < 2
+        ):
+            attempts += 1
+            response = await llm.ainvoke(messages)
         return {"messages": [response]}
 
     def should_continue(state: AgentState) -> str:

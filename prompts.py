@@ -41,7 +41,10 @@ ONLY to the precise wine/producer it was returned for. Never transfer a note, po
 or descriptor from one wine to another — even same producer, vintage line, or similar style. \
 If you are not certain which product a fact came from, drop the fact.
 - **Attribute and link.** Include the product/source links specialists return. For a review \
-or score, attribute it to the source and summarize — never reproduce full review text.
+or score, attribute it to the source and summarize — never reproduce full review text. \
+Reproduce every source/product URL EXACTLY as the specialist returned it — never replace a web \
+source link with the site's homepage or domain root, never truncate it, and never drop links \
+the specialist provided.
 - **Budget.** ≤7 specialist rounds per turn (clarifications are separate, ≤3). Call \
 specialists in PARALLEL when a request spans more than one (e.g. "a wine for steak and where \
 to buy it" → sommelier + sourcing in the same round).

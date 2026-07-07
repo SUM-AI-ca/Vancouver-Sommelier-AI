@@ -1,10 +1,11 @@
 """FastAPI backend — SSE chat endpoint, session management, static file serving."""
 
+import asyncio
 import json
 import logging
 import os
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import httpx
 from dotenv import load_dotenv
@@ -19,7 +20,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from agent import get_graph
+from agent import build_graph
 from mcp_server import mcp as retailer_mcp
 from validation import validate_query
 
@@ -51,13 +52,58 @@ _log_langsmith_status()
 
 PROXY_SECRET = os.getenv("PROXY_SECRET", "")
 
+# /internal/cleanup auth + defaults. The cleanup job deletes threads whose most
+# recent checkpoint is older than the cutoff (abandoned sessions the close-based
+# /end never reached). Guarded by its own secret so Cloud Scheduler can hit the
+# run.app URL directly (this path is outside /api/, so the proxy guard skips it).
+CLEANUP_SECRET = os.getenv("CLEANUP_SECRET", "")
+CLEANUP_MAX_AGE_DAYS = int(os.getenv("CLEANUP_MAX_AGE_DAYS", "7"))
+# Floor for real deletions so a leaked secret can't nuke everything via days=0.
+# dry_run inspection is allowed at any age.
+CLEANUP_MIN_AGE_DAYS = 1
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # streamable_http_app() (mounted at /mcp below) requires the MCP session
     # manager task group to be running for the app's lifetime.
+    #
+    # The graph is built HERE (not lazily) so its checkpointer's connection
+    # pool lives for the whole process lifetime. With DATABASE_URL set we use a
+    # shared Cloud SQL Postgres saver so conversation state is durable and
+    # SHARED across Cloud Run instances — without it, turns of one chat that land
+    # on different instances would lose context and break clarification resume.
+    # No DATABASE_URL ⇒ in-process InMemorySaver (local dev / tests only).
+    global _graph, _db_pool
     async with retailer_mcp.session_manager.run():
-        yield
+        db_uri = os.getenv("DATABASE_URL")
+        if db_uri:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            from psycopg_pool import AsyncConnectionPool
+
+            # autocommit + prepare_threshold=0 are required by the saver and keep
+            # it compatible with connection poolers. open=False so the pool opens
+            # inside the async context (avoids the "opened in constructor" warning).
+            async with AsyncConnectionPool(
+                conninfo=db_uri,
+                min_size=1,
+                max_size=int(os.getenv("DB_POOL_MAX_SIZE", "5")),
+                open=False,
+                kwargs={"autocommit": True, "prepare_threshold": 0},
+            ) as pool:
+                checkpointer = AsyncPostgresSaver(pool)
+                await checkpointer.setup()  # idempotent: creates tables/migrations
+                _graph = build_graph(checkpointer)
+                _db_pool = pool  # reused by the /internal/cleanup job for raw queries
+                log.info("Checkpointer: AsyncPostgresSaver (shared, Cloud SQL)")
+                yield
+        else:
+            from langgraph.checkpoint.memory import InMemorySaver
+
+            _graph = build_graph(InMemorySaver())
+            log.warning("DATABASE_URL unset — using InMemorySaver (local/dev only, "
+                        "state is per-instance and lost on restart)")
+            yield
 
 
 def _client_ip(request: Request) -> str:
@@ -105,12 +151,17 @@ app.add_middleware(
 MAX_IMAGES = 2
 
 _graph = None
+# The AsyncConnectionPool behind the Postgres checkpointer (None in InMemorySaver
+# mode). The /internal/cleanup job borrows it to find stale threads by raw SQL.
+_db_pool = None
 
 
 def _get_graph():
-    global _graph
+    # Built once at startup by lifespan() with the shared checkpointer. If it's
+    # None, the app isn't through startup yet (or lifespan didn't run) — fail
+    # loudly rather than silently spinning up an unshared in-memory graph.
     if _graph is None:
-        _graph = get_graph()
+        raise RuntimeError("graph not initialized — lifespan startup did not run")
     return _graph
 
 
@@ -144,6 +195,15 @@ async def _verify_turnstile(token: str | None, request: Request) -> bool:
                   "remoteip": request.client.host if request.client else ""},
         )
         return resp.json().get("success", False)
+
+
+# Max silence the SSE stream tolerates before emitting a keepalive comment.
+# Long agent phases (sourcing sub-agent, the silent compact_tool_results relevance
+# filter, and the orchestrator's final synthesis) send no bytes to the client. An
+# intermediate proxy in the path (Cloudflare Pages Worker → Cloud Run) severs a
+# connection that goes idle for too long (~100s at Cloudflare's edge), which the
+# browser surfaces as a raw "Connection error". A periodic ping keeps it alive.
+HEARTBEAT_SECONDS = 15
 
 
 def sse(payload: dict) -> str:
@@ -376,6 +436,75 @@ async def create_session() -> SessionResponse:
     return SessionResponse(thread_id=str(uuid.uuid4()))
 
 
+@app.post("/api/session/{thread_id}/end")
+async def end_session(thread_id: str):
+    """Delete a thread's checkpoint when the user closes the chat / tab, so closed
+    conversations don't pile up in the store. Best-effort and idempotent: deleting
+    an unknown thread is a no-op. Intentionally not rate-limited or Turnstile-gated
+    — cleanup must not consume the chat budget. The /api/* proxy guard still
+    applies, so only the Cloudflare worker reaches it."""
+    try:
+        cp = getattr(_get_graph(), "checkpointer", None)
+        if cp is not None:
+            await cp.adelete_thread(thread_id)
+    except Exception as e:
+        log.warning("end_session: failed to delete thread %s: %s", thread_id, e)
+    return {"ok": True}
+
+
+@app.post("/internal/cleanup")
+async def cleanup_sessions(request: Request):
+    """Periodic sweep of ABANDONED threads — ones whose close-based /end never
+    fired (browser crash, lost beacon, refresh). Deletes every thread whose most
+    recent checkpoint is older than the cutoff. Postgres has no native TTL, so a
+    scheduled call here is what keeps the table from growing unbounded.
+
+    Auth: a dedicated X-Cleanup-Secret header (NOT the proxy secret) — this path
+    is outside /api/ so the proxy guard skips it, letting Cloud Scheduler call the
+    run.app URL directly. Query params: ?dry_run=1 (count only, no delete),
+    ?days=N (override cutoff; real deletes are floored at CLEANUP_MIN_AGE_DAYS so a
+    leaked secret can't wipe everything with days=0)."""
+    if not CLEANUP_SECRET or request.headers.get("X-Cleanup-Secret") != CLEANUP_SECRET:
+        return JSONResponse(status_code=403, content={"error": "forbidden"})
+    if _db_pool is None:
+        return JSONResponse(status_code=503, content={"error": "no database (InMemorySaver mode)"})
+
+    dry_run = (request.query_params.get("dry_run") or "").lower() in ("1", "true", "yes")
+    try:
+        days = int(request.query_params.get("days", CLEANUP_MAX_AGE_DAYS))
+    except ValueError:
+        days = CLEANUP_MAX_AGE_DAYS
+    if not dry_run:
+        days = max(days, CLEANUP_MIN_AGE_DAYS)
+    days = max(days, 0)
+
+    # A thread's "last activity" is the newest checkpoint timestamp it owns; the
+    # checkpoint JSONB carries an ISO `ts`. Group by thread, keep the stale ones.
+    async with _db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT thread_id FROM checkpoints "
+                "GROUP BY thread_id "
+                "HAVING max((checkpoint->>'ts')::timestamptz) < now() - make_interval(days => %s)",
+                (days,),
+            )
+            stale = [r[0] for r in await cur.fetchall()]
+
+    deleted = 0
+    if not dry_run:
+        cp = _get_graph().checkpointer
+        for tid in stale:
+            try:
+                await cp.adelete_thread(tid)
+                deleted += 1
+            except Exception as e:
+                log.warning("cleanup: failed to delete thread %s: %s", tid, e)
+
+    log.info("cleanup: cutoff=%dd stale=%d deleted=%d dry_run=%s",
+             days, len(stale), deleted, dry_run)
+    return {"cutoff_days": days, "stale": len(stale), "deleted": deleted, "dry_run": dry_run}
+
+
 def _extract_token_texts(chunk) -> list[str]:
     """Pull a list of text fragments out of a chat-model stream chunk.
 
@@ -401,7 +530,7 @@ async def chat(req: ChatRequest, request: Request):
     if not await _verify_turnstile(req.cf_turnstile_token, request):
         return JSONResponse(status_code=403, content={"error": "Bot verification failed"})
 
-    async def event_stream():
+    async def _run_graph():
         graph = _get_graph()
         config = {
             "recursion_limit": 30,
@@ -455,7 +584,7 @@ async def chat(req: ChatRequest, request: Request):
             # Multimodal turn: text + image parts in one HumanMessage. The id is set
             # explicitly so vision_node can swap this message in place (same id) after
             # it folds the extraction in and strips the image. See agent.vision_node.
-            parts = [{"type": "text", "text": req.message or "이 와인 이미지를 분석해줘"}]
+            parts = [{"type": "text", "text": req.message or "Analyze this wine image."}]
             for url in req.images[:MAX_IMAGES]:
                 parts.append({"type": "image_url", "image_url": {"url": url}})
             inputs = {"messages": [HumanMessage(content=parts, id=str(uuid.uuid4()))]}
@@ -477,6 +606,10 @@ async def chat(req: ChatRequest, request: Request):
         # fallback so the badge always resolves even if that exact event is missed.
         vision_started = False
         vision_result_sent = False
+        # Tracks whether any user-facing answer token reached the client. If the
+        # final orchestrator round returned empty (Gemini blank response) or its
+        # chunks were dropped, this stays False and we fall back to state below.
+        answer_streamed = False
 
         try:
             async for event in graph.astream_events(inputs, config=config, version="v2"):
@@ -545,6 +678,7 @@ async def chat(req: ChatRequest, request: Request):
                         continue
                     for t in texts:
                         yield sse({"type": "token", "text": t, "run_id": run_id})
+                        answer_streamed = True
 
             # If the orchestrator paused on ask_user_clarification_tool, the
             # graph stops at an interrupt. Surface the question to the frontend
@@ -573,10 +707,56 @@ async def chat(req: ChatRequest, request: Request):
                     "options": payload.get("options") or [],
                 })
 
+            # Fallback: the turn produced no streamed answer and isn't waiting on a
+            # clarification — recover the final AI message from state so the UI never
+            # ends on a blank reply (covers a missed/empty final-round token stream).
+            if not pending and not answer_streamed:
+                state_vals = getattr(post_snapshot, "values", None) or {} if post_snapshot else {}
+                msgs = state_vals.get("messages") or []
+                final_text = "".join(_extract_token_texts(msgs[-1])) if msgs else ""
+                if final_text.strip():
+                    yield sse({"type": "token", "text": final_text, "run_id": "final-fallback"})
+
             yield sse({"type": "done"})
         except Exception as e:
             yield sse({"type": "error", "message": str(e)})
             yield sse({"type": "done"})
+
+    async def event_stream():
+        # Merge real graph events with periodic keepalive pings so the stream
+        # never stays silent long enough for an intermediate proxy to drop it.
+        # A producer task feeds graph output into a queue; the consumer emits a
+        # ": ping" comment whenever the queue is idle past HEARTBEAT_SECONDS.
+        # The frontend SSE parser only reads `data:` lines, so comment pings are
+        # ignored client-side (frontend/app.js).
+        queue: asyncio.Queue = asyncio.Queue()
+        DONE = object()
+
+        async def producer():
+            try:
+                async for chunk in _run_graph():
+                    await queue.put(chunk)
+            except Exception as e:  # never let a producer crash hang the consumer
+                await queue.put(sse({"type": "error", "message": str(e)}))
+                await queue.put(sse({"type": "done"}))
+            finally:
+                await queue.put(DONE)
+
+        task = asyncio.create_task(producer())
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                if item is DONE:
+                    break
+                yield item
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
