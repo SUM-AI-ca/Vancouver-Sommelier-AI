@@ -3,7 +3,7 @@
 > 2026 Google for Startups AI Agents Challenge — Track 1: Build
 
 A multi-agent AI drinks concierge for the Vancouver market. Built on a LangGraph Supervisor + 3 specialist agent architecture, it searches real-time inventory and pricing across 6 Vancouver-area retail chains (including BC Liquor Stores' 200+ locations province-wide and Everything Wine's 4 Lower Mainland stores), provides expert knowledge via Google Search grounding, and offers food pairing guidance. Supports both B2C (consumer recommendations) and B2B (beverage menu design for F&B businesses).
-Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), retailer tools served over **MCP (Model Context Protocol)** with a public endpoint at `wineaiagent.com/mcp`, FastAPI real-time SSE token streaming, multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, request timeout + error recovery, LLM-as-judge quality eval pipeline.
+Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API) + Cloud SQL Postgres (conversation state). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), retailer tools served over **MCP (Model Context Protocol)** with a public endpoint at `wineaiagent.com/mcp`, FastAPI real-time SSE token streaming with heartbeat keepalive, durable cross-instance conversation persistence (Postgres checkpointer + session-end cleanup + scheduled abandoned-thread sweep), multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, Gemini empty-response guard, grounding deep-link resolution, request timeout + error recovery, LLM-as-judge quality eval pipeline.
 
 ---
 
@@ -14,7 +14,7 @@ Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend 
 ```
 User query (+ optional wine label / wine list / food menu photo)
     ↓
-Cloudflare Pages (frontend/ — vanilla JS SSE client, 360s timeout)
+Cloudflare Pages (frontend/ — vanilla JS SSE client, 60min timeout)
     ↓  POST /api/chat { message, thread_id, images }
 Google Cloud Run — FastAPI backend (app.py — SSE streaming)
     ↓
@@ -32,7 +32,8 @@ LangGraph Supervisor (agent.py — Gemini 3.5 Flash, max 7 tool rounds)
     │
     │   entry_router ─(image)──→ vision_node ─┐
     │                └─(text)────────────────┴→ supervisor
-    │                                                ↕ InMemorySaver (thread_id)
+    │                                                ↕ AsyncPostgresSaver — Cloud SQL (thread_id)
+    │                                                  (InMemorySaver fallback when DATABASE_URL unset)
     │   supervisor → specialist routing (+ owns clarification)
     │       ↓ (ask_user_clarification_tool)
     │    interrupt() → SSE clarification_request → user reply
@@ -47,7 +48,8 @@ LangGraph Supervisor (agent.py — Gemini 3.5 Flash, max 7 tool rounds)
     │   │            suttonplace, marquis, legacy                         │
     │   │       (public Streamable HTTP endpoint: wineaiagent.com/mcp)     │
     │   │                                                                  │
-    │   │  Sommelier Agent ── pairing + grounding (max 4 rounds)           │
+    │   │  Sommelier Agent ── pairing + grounding (max 3 rounds,           │
+    │   │                     single-round batched parallel lookups)       │
     │   │    └─ reasoning_pair_wine, search_web_grounded                  │
     │   │                                                                  │
     │   │  Menu Architect ─── B2B beverage menu design (max 5 rounds)      │
@@ -55,9 +57,11 @@ LangGraph Supervisor (agent.py — Gemini 3.5 Flash, max 7 tool rounds)
     │   └──────────────────────────────────────────────────────────────────┘
     │
     │   tool_error_to_json — exceptions → status:error (non-fatal)
+    │   blank-response retry — Gemini empty-candidate guard (×3 supervisor, ×2 specialists)
     │   supervisor final answer → END
     ↓
-Real-time SSE token streaming → frontend (tool badges + markdown + PDF export)
+Real-time SSE token streaming (15s heartbeat keepalive) → frontend (tool badges + markdown + PDF export)
+    │   (final round streamed nothing? → recover answer from checkpoint state)
     ↓
 LangSmith tracing (optional)
 ```
@@ -66,6 +70,7 @@ A full Mermaid diagram with color-coded nodes (agents, tools, gates, stores) is 
 
 ```bash
 python draw_graph.py          # outputs graph_mermaid.md + graph.png
+python draw_graph_v2.py       # public-facing variant (retailer names collapsed into the MCP server) → graph_v2_mermaid.md + graph_v2.png
 ```
 
 ---
@@ -84,6 +89,10 @@ Supervisor + 3 specialist pattern. Each specialist runs as an independent ReAct 
 **Specialist-to-specialist delegation**: The Menu Architect calls `sourcing_agent_tool` directly to source real Vancouver retail products and prices after designing the menu — an in-process hand-off between specialists, without Supervisor mediation. (This is internal LangGraph delegation, not the A2A wire protocol.)
 
 **Multi-turn enforcement**: The Supervisor prompt enforces specialist routing on every turn — when a follow-up asks for a new product category or new recommendations ("also recommend beer", "what about spirits"), it must route to the relevant specialist rather than answering from training knowledge. The "Never invent" rule applies equally on every turn.
+
+**Single-round tool batching (Sommelier)**: A full recommendation typically needs several independent lookups (review searches for the wine, the beer, and the sake picks, plus possibly a pairing-reasoning call). Left to itself, the model issued them one per ReAct round, serializing what LangGraph would happily run in parallel — full-turn latency swung between ~47s and ~110s depending on how many rounds the model chose. The Sommelier prompt now mandates that every independent lookup be emitted **as one batch of tool calls in a single response** (holding a call back only when it genuinely needs a previous call's result), and `max_rounds` was trimmed 4 → 3. Measured effect: ~50s stable full-turn latency with unchanged answer quality.
+
+**Pairing-tool guard**: `reasoning_pair_wine_tool` may only be called for a dish/cuisine **the user explicitly named** — never for a dish fabricated from a wine or product name. A product-only query ("synchromesh riesling") is treated as an information request: the Sommelier covers that product's style, profile, and cited reviews (noting suitable food *categories* in prose at most) instead of inventing a meal and branching into every beverage category. Enforced in both the Sommelier system prompt ([`agents/sommelier_agent.py`](agents/sommelier_agent.py)) and the tool docstring ([`agent_tools.py`](agent_tools.py)).
 
 ---
 
@@ -118,10 +127,12 @@ Standalone server (without the FastAPI app): `python mcp_server.py` → `http://
 
 Frontend and backend are deployed separately.
 
-| Layer | Service | URL |
-|-------|---------|-----|
+| Layer | Service | URL / Identifier |
+|-------|---------|------------------|
 | **Frontend** | Cloudflare Pages | `wineaiagent.com` / `www.wineaiagent.com` |
 | **Backend API** | Google Cloud Run | `bc-wine-agent-135257828500.us-west1.run.app` |
+| **Conversation state** | Cloud SQL for PostgreSQL 16 | instance `wine-agent-pg` (us-west1), DB `checkpoints`, unix-socket via `/cloudsql/wine-agent-jh-2026:us-west1:wine-agent-pg` |
+| **Session sweep** | Cloud Scheduler | job `cleanup-abandoned-sessions` — daily 04:00 America/Vancouver → `POST /internal/cleanup` |
 
 - Frontend (`frontend/`) is deployed directly to Cloudflare Pages. No build command, output directory `frontend/`.
 - Backend is built as a Docker image and deployed to Cloud Run. Gemini API is called via GCP service account authentication.
@@ -131,19 +142,36 @@ Frontend and backend are deployed separately.
 ### Cloud Run Deployment
 
 ```bash
-gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agent-jh-2026 --allow-unauthenticated
+gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agent-jh-2026 \
+  --allow-unauthenticated --timeout=3600 \
+  --add-cloudsql-instances=wine-agent-jh-2026:us-west1:wine-agent-pg \
+  --update-secrets=DATABASE_URL=DATABASE_URL:latest
 ```
+
+> `--timeout=3600` sets Cloud Run's per-request timeout to 1 hour (Cloud Run's maximum). Without it the default is 300s (5 min), and long agent runs are cut off server-side regardless of the frontend timeout.
+
+> `--add-cloudsql-instances` mounts the Cloud SQL unix socket into the container; `--update-secrets` maps the Secret Manager secret `DATABASE_URL` into the env var of the same name (socket-form conninfo: `postgresql://wineagent:…@/checkpoints?host=/cloudsql/wine-agent-jh-2026:us-west1:wine-agent-pg`). Both flags are **additive** and survive later `--source .` redeploys — never use `--set-secrets` / `--set-cloudsql-instances`, which overwrite the existing configuration.
 
 Required IAM roles for the Cloud Run service account:
 - `roles/aiplatform.user` — Gemini API calls
 - `roles/run.invoker` (allUsers) — public access
+- `roles/cloudsql.client` — Postgres checkpointer socket connection
+- `roles/secretmanager.secretAccessor` — read the `DATABASE_URL` secret
 
 ### Cloudflare Pages Deployment
+
+Deploys are pushed from the CLI with Wrangler (direct upload — no git integration):
+
+```bash
+npx wrangler pages deploy --project-name=bc-wine-ai-agents --branch=main
+```
+
+> The Pages project on the Cloudflare dashboard is named **`bc-wine-ai-agents`** — the `name` field in the local `wrangler.toml` (`bcwineaiagents`) is *not* it, so always pass `--project-name` explicitly. `--branch=main` targets the production branch (a direct-upload deploy without it can land as a preview).
 
 Cloudflare Pages project settings:
 - **Production branch**: `main`
 - **Build command**: (none)
-- **Build output directory**: `frontend`
+- **Build output directory**: `frontend` (from `pages_build_output_dir` in `wrangler.toml`)
 - **Custom domains**: `wineaiagent.com`, `www.wineaiagent.com`
 
 ---
@@ -198,6 +226,32 @@ Implementation: [`vision.py`](vision.py), `VISION_EXTRACTION_PROMPT` in [`prompt
 
 Implementation: `tool_error_to_json` in [`safety.py`](safety.py) + ToolNode wiring in [`agent.py`](agent.py), `search_with_fallback` in [`tools/query_fallback.py`](tools/query_fallback.py).
 
+### Durable Conversation State — Cloud SQL Postgres Checkpointer
+
+Conversation state (message history, pending interrupts) is persisted in a **shared Cloud SQL Postgres checkpointer**, not in process memory. Cloud Run runs multiple instances: with the previous per-instance `InMemorySaver`, turns of one conversation that landed on different instances lost context and broke clarification resume, and every restart/deploy wiped all sessions. With the shared saver, any instance can serve any turn of any thread.
+
+**Startup wiring.** The graph is built once in `app.py`'s `lifespan()` — not lazily — so the checkpointer's connection pool lives for the whole process lifetime. With `DATABASE_URL` set, a `psycopg` `AsyncConnectionPool` (autocommit, `prepare_threshold=0` for pooler compatibility, `max_size` = `DB_POOL_MAX_SIZE`, default 5) backs an `AsyncPostgresSaver`; `setup()` runs idempotent table migrations. Without `DATABASE_URL`, it falls back to `InMemorySaver` with a startup warning (local dev / tests only).
+
+**Session lifecycle — three cleanup layers** (Postgres has no native TTL):
+1. **Explicit close** — closing the chat overlay or the tab (`pagehide`, bfcache-aware) aborts any in-flight stream, then fires `navigator.sendBeacon` (keepalive-`fetch` fallback) to `POST /api/session/{thread_id}/end`, which deletes the thread's checkpoints (`adelete_thread`; best-effort, idempotent, behind the proxy guard but intentionally not rate-limited).
+2. **Abandoned-thread sweep** — `POST /internal/cleanup` deletes every thread whose newest checkpoint is older than the cutoff (`CLEANUP_MAX_AGE_DAYS`, default 7). Called daily at 04:00 America/Vancouver by the Cloud Scheduler job `cleanup-abandoned-sessions` against the run.app URL directly (the path is outside `/api/`, so the proxy guard doesn't apply — it has its own `X-Cleanup-Secret` header auth instead). Supports `?dry_run=1` (count only) and `?days=N`; real deletions are floored at `CLEANUP_MIN_AGE_DAYS=1` so a leaked secret can't wipe everything with `days=0`.
+3. **Fresh thread per open** — the frontend never reuses a `thread_id` across chat opens, so nothing accumulates per user.
+
+**E2E verification.** `python -m scripts.db_e2e_smoke` drives the live public path (worker-proxied, no secrets needed): health → fresh session → **two-turn recall of a distinctive budget** (proves the checkpoint is written to and read back from Postgres) → **forget after `/end`** (proves `adelete_thread`) → 403 on unauthenticated `/internal/cleanup`.
+
+Implementation: `lifespan()` + `end_session` + `cleanup_sessions` in [`app.py`](app.py), `build_graph(checkpointer)` in [`agent.py`](agent.py), `endSession()` + `pagehide` hook in [`frontend/app.js`](frontend/app.js), smoke test in [`scripts/db_e2e_smoke.py`](scripts/db_e2e_smoke.py).
+
+### Streaming Reliability — SSE Heartbeat + Empty-Response Guard
+
+**SSE heartbeat (proxy idle cut).** Long agent phases stream no bytes for minutes at a time — the sourcing fan-out, the silent relevance-filter pass, the final synthesis round. An intermediate proxy (Cloudflare edge in the Pages-worker → Cloud Run path) severs connections idle past ~100s, which the browser surfaced as a raw "Connection error" mid-turn. `app.py` therefore decouples graph output from the HTTP response with a producer/consumer queue: whenever the queue is idle past `HEARTBEAT_SECONDS` (15s), the stream emits a `: ping` SSE comment. The frontend parser only consumes `data:` lines, so pings are invisible client-side — but the connection never goes silent.
+
+**Gemini empty-response guard.** Gemini intermittently returns an empty candidate ("Gemini produced an empty response. Continuing with empty message"). On a final-answer round, that blank `AIMessage` has no tool calls, so the graph routes to END and the turn finishes with tool badges showing "completed" but no answer text. Three layers prevent this:
+1. **Supervisor retry** — `orchestrator_node` re-invokes the model up to `EMPTY_RESPONSE_RETRIES=3` times while the reply has neither tool calls nor text ([`agent.py`](agent.py)).
+2. **Specialist retry** — the shared ReAct sub-graph applies the same blank-response check with up to 2 re-invokes, so a specialist never returns an empty answer to the Supervisor ([`agents/react_subagent.py`](agents/react_subagent.py)).
+3. **Stream fallback** — `app.py` tracks whether any answer token actually reached the client; if the turn ends with nothing streamed and no pending clarification, it recovers the final AI message from checkpoint state and emits it as a single `final-fallback` token, so the UI never ends on a blank reply.
+
+Verification: `scripts/verify_empty_guard.py` — deterministic stub tests forcing blank responses (asserts the retries recover a real answer) plus a live regression turn.
+
 ---
 
 ## UI/UX
@@ -207,9 +261,9 @@ Implementation: `tool_error_to_json` in [`safety.py`](safety.py) + ToolNode wiri
 - **Status indicator** — top-left of chat header shows **symbol only** (no text). A fixed dot when idle, a spinning ring when active. `aria-live` delivers status text to screen readers.
 - **Agent box** — specialist agent results (Sourcing, Sommelier, Menu Architect) render in collapsible agent-box components showing inner tool call details and the answer in markdown.
 - **Tool badges** — each tool call renders as an expandable badge. Shows result count on completion + click for result preview dropdown.
-- **Session per chat open** — a new `thread_id` is issued each time the chat overlay opens. Follow-ups within the same overlay share memory, but closing and reopening starts fresh.
+- **Session per chat open** — a new `thread_id` is issued each time the chat overlay opens. Follow-ups within the same overlay share memory, but closing and reopening starts fresh. Closing the chat — or the tab (`pagehide`, skipped when the page is bfcache-persisted) — also ends the session server-side: any in-flight stream is aborted first (so the running graph can't re-write a checkpoint just deleted), then `navigator.sendBeacon` (keepalive-`fetch` fallback) posts to `/api/session/{thread_id}/end` to delete the thread's checkpoints from Postgres.
 - **Real-time token streaming** — orchestrator tokens stream to the client immediately via SSE. Each orchestrator round carries a unique `run_id`; the frontend detects `run_id` changes and clears the previous partial answer, so intermediate tool-calling rounds are naturally replaced by the final answer round. On clarification interrupts, any partial text is cleaned up before the clarification UI appears.
-- **Request timeout + error recovery** — 6-minute `AbortController` timeout prevents infinite spinner on backend hangs. Non-200 responses (429 rate limit, 5xx errors) are caught before SSE parsing with user-facing error messages. A `finally` safety net resets the spinner if the stream ends without a `done` event. The backend also emits `done` after `error` events for protocol completeness.
+- **Request timeout + error recovery** — 60-minute `AbortController` timeout (matches Cloud Run's max `--timeout=3600`) prevents infinite spinner on backend hangs. Non-200 responses (429 rate limit, 5xx errors) are caught before SSE parsing with user-facing error messages. A `finally` safety net resets the spinner if the stream ends without a `done` event. The backend also emits `done` after `error` events for protocol completeness.
 - **Links open in new tab** — all `<a>` tags from `marked.parse` get `target="_blank" rel="noopener noreferrer"` injected automatically.
 
 ---
@@ -307,6 +361,7 @@ Knowledge and review search using Gemini's native Google Search grounding. Runs 
 - **Data**: grounded answer + source URL list
 - **Use cases**: drinks education, region/producer info, reviews/scores (citation + summary only, no full-text reproduction), supplementing gaps in store tool results
 - **Copyright guardrail**: caller prompts enforce source attribution + summary only, prohibiting verbatim reproduction of reviews
+- **Deep-link resolution**: Gemini grounding returns each source as an opaque redirect token (`vertexaisearch.cloud.google.com/grounding-api-redirect/…`), not the real page URL. These ~200-char tokens expire (~30 days), and because their only human-readable part is the bare domain, the Supervisor LLM tends to shorten them to the site homepage or drop them when composing the final answer. `search_web_grounded` resolves each token to its real destination deep URL server-side (concurrent `httpx`, first `Location` hop, graceful fallback to the token on failure) and rewrites both the source list and any inline links in the answer — so the model only ever sees short, stable, copy-able deep links. Caller prompts (`agents/sommelier_agent.py`, `prompts.py`) additionally require source URLs to be reproduced verbatim, never reduced to a homepage.
 
 ```python
 results, answer = await search_web_grounded("best food pairings for BC Pinot Noir")
@@ -318,9 +373,9 @@ results, answer = await search_web_grounded("best food pairings for BC Pinot Noi
 
 ```
 Vancouver-Sommelier-AI/
-├── agent.py                    # LangGraph Supervisor graph (entry_router + vision + supervisor ↔ tools)
+├── agent.py                    # LangGraph Supervisor graph (entry_router + vision + supervisor ↔ tools, blank-response retry)
 ├── agent_tools.py              # @tool wrappers + specialist groups (SOURCING / SOMMELIER / SUPERVISOR_DIRECT)
-├── app.py                      # FastAPI backend (SSE streaming, CORS, multimodal input, validation gate, /mcp mount)
+├── app.py                      # FastAPI backend (SSE streaming + 15s heartbeat, validation gate, Postgres checkpointer lifecycle, session end/cleanup, /mcp mount)
 ├── mcp_server.py               # MCP server "vancouver-retailers" — 6 retailer tools over Streamable HTTP
 ├── mcp_client.py               # Sourcing Agent's MCP tool loader (self-connection + in-process fallback)
 ├── validation.py               # Pre-agent query validation (off-topic bypass)
@@ -335,7 +390,7 @@ Vancouver-Sommelier-AI/
 ├── .dockerignore               # Docker build exclusions
 ├── agents/                     # Specialist agents (independent ReAct sub-graphs)
 │   ├── __init__.py             # Architecture docs
-│   ├── react_subagent.py       # Shared ReAct sub-graph builder + run_subagent_json wrapper
+│   ├── react_subagent.py       # Shared ReAct sub-graph builder (+ blank-response retry) + run_subagent_json wrapper
 │   ├── sourcing_agent.py       # Sourcing Agent — parallel search across 6 retail chains
 │   ├── sommelier_agent.py      # Sommelier Agent — pairing + grounding
 │   └── menu_architect.py       # Menu Architect — B2B beverage menu design (delegates to Sourcing)
@@ -356,8 +411,11 @@ Vancouver-Sommelier-AI/
 │   └── _worker.js              # Cloudflare Workers proxy (API routing + security filtering)
 ├── scripts/                    # Utility scripts
 │   ├── debug_everythingwine.py # Everything Wine HTML structure debugging
-│   └── mcp_smoke.py            # MCP smoke test (tools load + live call over the protocol)
+│   ├── mcp_smoke.py            # MCP smoke test (tools load + live call over the protocol)
+│   ├── db_e2e_smoke.py         # Live E2E smoke of the Postgres checkpointer (recall / forget / cleanup auth)
+│   └── verify_empty_guard.py   # Empty-response guard tests (stubbed retries + live regression)
 ├── draw_graph.py               # Architecture Mermaid diagram generator
+├── draw_graph_v2.py            # Same diagram, retailer names collapsed into the MCP server (public-facing)
 ├── tests/                      # Golden-query quality evaluation
 │   ├── golden_queries.py       # Golden queries (multiple categories)
 │   ├── metrics.py              # Deterministic metrics (orchestration, hallucination, coverage, structure)
@@ -394,7 +452,7 @@ gcloud auth application-default login
 
 ### Environment Variables
 
-Create a `.env` file:
+Create a `.env` file (everything is optional for local runs):
 
 ```
 # LangSmith (optional — tracing & observability)
@@ -402,7 +460,25 @@ LANGSMITH_TRACING=true
 LANGSMITH_API_KEY=lsv2_sk_...
 LANGSMITH_PROJECT=bc-wine-agent
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+
+# Durable conversation state (optional locally — omit to use in-memory state)
+# DATABASE_URL=postgresql://user:pass@localhost:5432/checkpoints
 ```
+
+Full reference:
+
+| Env var | Default | Meaning |
+|---------|---------|---------|
+| `DATABASE_URL` | (unset) | Postgres conninfo for the shared checkpointer. Unset ⇒ `InMemorySaver` (local dev only — state is per-instance and lost on restart). In production this is a Secret Manager secret in unix-socket form: `postgresql://wineagent:…@/checkpoints?host=/cloudsql/wine-agent-jh-2026:us-west1:wine-agent-pg` |
+| `DB_POOL_MAX_SIZE` | `5` | Max connections in the checkpointer's async pool |
+| `CLEANUP_SECRET` | (unset) | `X-Cleanup-Secret` header value for `/internal/cleanup` (unset ⇒ endpoint always 403s) |
+| `CLEANUP_MAX_AGE_DAYS` | `7` | Default cutoff for the abandoned-thread sweep |
+| `PROXY_SECRET` | (empty) | Shared secret the Cloudflare worker injects as `X-Proxy-Secret`; when set, direct Cloud Run access to `/api/*` and `/mcp` is rejected without it |
+| `CF_TURNSTILE_SECRET` | (unset) | Cloudflare Turnstile server key; unset ⇒ bot verification disabled (current production setting) |
+| `GOOGLE_CLOUD_PROJECT` | `wine-agent-jh-2026` | GCP project for Gemini calls |
+| `GOOGLE_CLOUD_LOCATION` | `global` | Gemini location |
+| `SOURCING_VIA_MCP` / `MCP_SELF_URL` | see [MCP](#mcp--model-context-protocol) | Sourcing-agent transport switches |
+| `LANGSMITH_*` | (unset) | Tracing/observability (auto-enabled when set) |
 
 ### Individual Tool Testing
 
@@ -429,6 +505,8 @@ Open `http://localhost:8080` in a browser to access the chat UI.
 
 Port 8080 matches the default `MCP_SELF_URL` (`http://127.0.0.1:8080/mcp/`), so the Sourcing Agent loads its tools over MCP locally too. On a different port, set `MCP_SELF_URL` accordingly — otherwise the loader logs an ERROR and falls back to direct in-process tools (everything still works; only the transport differs).
 
+Without `DATABASE_URL`, startup logs a warning and uses `InMemorySaver` — fine for local development (state lives in the single process and vanishes on restart). Point `DATABASE_URL` at any local Postgres to exercise the durable checkpointer path; `AsyncPostgresSaver.setup()` creates its tables on first start.
+
 ### Docker (Local)
 
 ```bash
@@ -439,12 +517,14 @@ docker run -p 8080:8080 --env-file .env bc-wine-agent
 ### Production Deployment
 
 ```bash
-# Cloud Run (backend)
-gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agent-jh-2026 --allow-unauthenticated
+# Cloud Run (backend) — the Cloud SQL / secret flags are additive and persist across redeploys
+gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agent-jh-2026 \
+  --allow-unauthenticated --timeout=3600 \
+  --add-cloudsql-instances=wine-agent-jh-2026:us-west1:wine-agent-pg \
+  --update-secrets=DATABASE_URL=DATABASE_URL:latest
 
-# Cloudflare Pages (frontend)
-# Cloudflare Dashboard → Workers & Pages → bcwineaiagents project
-# Auto-deploys on push to main via GitHub integration
+# Cloudflare Pages (frontend) — direct upload via Wrangler (no git integration)
+npx wrangler pages deploy --project-name=bc-wine-ai-agents --branch=main
 ```
 
 ---
@@ -456,10 +536,12 @@ gcloud run deploy bc-wine-agent --source . --region us-west1 --project wine-agen
 - **Gemini 3.5 Flash** — Supervisor, Sourcing Agent, validation, vision node
 - **Gemini 3.1 Pro Preview** — Sommelier Agent, Menu Architect (advanced reasoning)
 - **Google Search grounding** — reviews/scores/factual knowledge (Gemini Enterprise Agent Platform native)
-- **FastAPI** — SSE streaming backend
+- **FastAPI** — SSE streaming backend (15s heartbeat keepalive against proxy idle cuts)
+- **Cloud SQL (PostgreSQL 16)** — durable cross-instance conversation checkpoints via **langgraph-checkpoint-postgres** (`AsyncPostgresSaver`) + **psycopg[binary,pool]**
+- **Cloud Scheduler** — daily abandoned-session sweep (`POST /internal/cleanup`)
 - **HTML/CSS/JS** — wine-colored chat UI (vanilla, no build step)
 - **Google Cloud Run** — backend container hosting
-- **Cloudflare Pages** — frontend static hosting + custom domains
+- **Cloudflare Pages** — frontend static hosting + custom domains (deployed via Wrangler direct upload)
 - **httpx** — async HTTP client (session/cookie management)
 - **BeautifulSoup4** — HTML parsing (Everything Wine)
 - **Pydantic** — data models & validation
