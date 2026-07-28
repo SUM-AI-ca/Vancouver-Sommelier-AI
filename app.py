@@ -734,8 +734,14 @@ async def chat(req: ChatRequest, request: Request):
             # Responsible-use and accuracy notice. Only on turns that actually
             # produced an answer — a turn that ended on a clarification question
             # hasn't recommended anything yet, so the notice would be noise.
+            #
+            # run_id MUST stay None. The frontend treats a token carrying a *new*
+            # run_id as the start of a fresh orchestrator round and deletes the
+            # bubble built so far (app.js: `aiDiv.remove()`), which is how it drops
+            # partial output from earlier rounds. Tagging the notice with its own id
+            # would therefore wipe the answer and leave only the notice on screen.
             if answer_streamed and not pending:
-                yield sse({"type": "token", "text": RESPONSE_NOTICE, "run_id": "notice"})
+                yield sse({"type": "token", "text": RESPONSE_NOTICE, "run_id": None})
 
             yield sse({"type": "done"})
         except Exception as e:
