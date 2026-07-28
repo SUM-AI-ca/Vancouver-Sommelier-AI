@@ -55,6 +55,7 @@ body {
     font-weight: 700;
     font-size: 1.25rem;
     letter-spacing: -0.2px;
+    text-decoration: none; /* .brand is an <a> on every page except the landing */
 }
 
 /* ── Landing ─────────────────────────────────────── */
@@ -147,6 +148,7 @@ body {
 /* ── Footer ──────────────────────────────────────── */
 
 .site-footer {
+    margin-top: auto; /* body is a flex column — pin the footer to the bottom */
     padding: 1.5rem 0;
     text-align: center;
     border-top: 1px solid var(--border-color);
@@ -987,6 +989,121 @@ a.tool-row:hover {
     }
 }
 
+/* ── Page shell for non-landing pages ────────────── */
+/* body is a flex column and .landing carries flex:1. Any other top-level <main>
+   must claim the same growth and tint, or the footer rides up under the content
+   and the page reads a different colour from the rest of the site. */
+
+.page-main {
+    flex: 1;
+    background: var(--background-secondary);
+    padding: 3.5rem 0 4rem;
+}
+
+/* ── Footer legal block ──────────────────────────── */
+
+.site-footer .footer-legal {
+    margin-bottom: 0.6rem;
+    font-size: 0.8rem;
+    line-height: 1.7;
+    color: var(--text-tertiary);
+}
+
+.site-footer .footer-legal strong {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.site-footer .footer-links {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+}
+
+/* ── Legal pages (terms, privacy) ────────────────── */
+/* .legal-body narrows the 980px .container to a comfortable reading measure,
+   the same way .hero does on the landing page. */
+
+.legal-body {
+    max-width: 720px;
+}
+
+.legal-body h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    color: var(--text-primary);
+    margin-bottom: 0.35rem;
+}
+
+.legal-meta {
+    font-size: 0.85rem;
+    color: var(--text-tertiary);
+    margin-bottom: 2.5rem;
+}
+
+.legal-body h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--primary);
+    margin: 2.5rem 0 0.9rem;
+    padding-top: 2.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.legal-body h2:first-of-type {
+    margin-top: 1.5rem;
+    padding-top: 0;
+    border-top: none;
+}
+
+.legal-body p {
+    color: var(--text-secondary);
+    line-height: 1.8;
+    margin-bottom: 1rem;
+}
+
+.legal-body ul {
+    list-style: none;
+    margin-bottom: 1.25rem;
+}
+
+.legal-body li {
+    position: relative;
+    color: var(--text-secondary);
+    line-height: 1.8;
+    padding: 0.3rem 0 0.3rem 1.25rem;
+}
+
+.legal-body li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.95rem;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--primary);
+    opacity: 0.45;
+}
+
+.legal-body a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+/* ── Hero compliance note ────────────────────────── */
+
+.hero-note {
+    max-width: 560px;
+    margin: 2rem auto 0;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.8rem;
+    line-height: 1.7;
+    color: var(--text-tertiary);
+}
+
 /* ── Age gate ────────────────────────────────────── */
 /* Shown by default; the inline head script adds .age-ok to <html> for returning
    visitors so the gate never flashes. */
@@ -1000,7 +1117,6 @@ a.tool-row:hover {
     justify-content: center;
     padding: 1.5rem;
     background: rgba(42, 31, 34, 0.72);
-    backdrop-filter: blur(4px);
 }
 
 .age-ok .age-gate {
@@ -1011,35 +1127,37 @@ a.tool-row:hover {
     background: var(--background);
     border-radius: 16px;
     box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
-    max-width: 420px;
+    max-width: 400px;
     width: 100%;
-    padding: 2rem;
+    padding: 2.25rem 2rem;
     text-align: center;
 }
 
 .age-gate-card h2 {
-    font-size: 1.375rem;
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: -0.2px;
     color: var(--text-primary);
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.85rem;
 }
 
 .age-gate-card p {
-    font-size: 0.9375rem;
-    line-height: 1.6;
+    font-size: 0.9rem;
+    line-height: 1.7;
     color: var(--text-secondary);
 }
 
 .age-gate-actions {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 1rem;
-    margin: 1.5rem 0 1.25rem;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.85rem;
+    margin: 1.75rem 0 1.5rem;
 }
 
 .age-gate-exit {
     color: var(--text-tertiary);
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
     text-decoration: none;
 }
 
@@ -1048,101 +1166,23 @@ a.tool-row:hover {
 }
 
 .age-gate-fine {
-    font-size: 0.8125rem !important;
-    color: var(--text-tertiary) !important;
-    line-height: 1.55 !important;
+    font-size: 0.775rem;
+    line-height: 1.65;
+    color: var(--text-tertiary);
 }
 
 .age-gate-fine a {
     color: var(--primary);
 }
 
-/* ── Hero compliance note ────────────────────────── */
-
-.hero-note {
-    max-width: 620px;
-    margin: 1.75rem auto 0;
-    font-size: 0.8125rem;
-    line-height: 1.6;
-    color: var(--text-tertiary);
-}
-
-/* ── Footer legal block ──────────────────────────── */
-
-.footer-legal {
-    margin-bottom: 0.75rem;
-    line-height: 1.7;
-    color: var(--text-tertiary) !important;
-}
-
-.footer-legal strong {
-    color: var(--text-secondary);
-}
-
-/* ── Legal pages (terms, privacy) ────────────────── */
-
-.legal {
-    max-width: 720px;
-    padding: 3.5rem 1.5rem 4rem;
-}
-
-.legal h1 {
-    font-size: 2rem;
-    color: var(--text-primary);
-    margin-bottom: 0.25rem;
-}
-
-.legal-meta {
-    font-size: 0.875rem;
-    color: var(--text-tertiary);
-    margin-bottom: 2rem;
-}
-
-.legal h2 {
-    font-size: 1.125rem;
-    color: var(--primary);
-    margin: 2.25rem 0 0.75rem;
-    padding-top: 2.25rem;
-    border-top: 1px solid var(--border-color);
-}
-
-.legal h2:first-of-type {
-    margin-top: 1.5rem;
-    padding-top: 0;
-    border-top: none;
-}
-
-.legal p,
-.legal li {
-    color: var(--text-secondary);
-    line-height: 1.75;
-    margin-bottom: 0.85rem;
-}
-
-.legal ul {
-    padding-left: 1.25rem;
-    margin-bottom: 1rem;
-}
-
-.legal li {
-    margin-bottom: 0.35rem;
-}
-
-.legal a {
-    color: var(--primary);
-    text-decoration: underline;
-    text-underline-offset: 3px;
-}
-
 @media (max-width: 640px) {
+    .page-main {
+        padding: 2.5rem 0 3rem;
+    }
+    .legal-body h1 {
+        font-size: 1.6rem;
+    }
     .age-gate-card {
-        padding: 1.5rem;
-    }
-    .age-gate-actions {
-        flex-direction: column;
-        gap: 0.75rem;
-    }
-    .legal {
-        padding: 2.5rem 1.25rem 3rem;
+        padding: 1.75rem 1.35rem;
     }
 }
