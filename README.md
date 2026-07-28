@@ -256,7 +256,10 @@ Verification: `scripts/verify_empty_guard.py` — deterministic stub tests forci
 
 ## UI/UX
 
+- **19+ gate** — first visit shows a one-click age confirmation before the landing page is usable. The answer is stored in `localStorage`, and an inline script in `<head>` applies the `age-ok` class before first paint so returning visitors never see it flash.
 - **Landing + fullscreen chat overlay** — a landing page with capability descriptions; clicking "Start chatting" opens a fullscreen chat overlay.
+- **Persistent chat disclaimer** — a muted line under the chat input carries the non-commercial, non-affiliation, and responsible-drinking statements. It lives in the chat chrome rather than in the message stream: the overlay is `position: fixed; inset: 0`, so the page footer that normally carries those statements is hidden while the chat is open, and appending them to answers instead would both clutter the transcript and collide with the `run_id` bubble logic described below.
+- **Page shell** — `body` is a flex column; `.landing` and `.page-main` claim `flex: 1` and the secondary background, and `.site-footer` uses `margin-top: auto`. A new page must use one of those two shells or it will render on the wrong background with the footer riding up under the content.
 - **Soft wine color palette** — desaturated burgundy (`#7A3D4F`) tone.
 - **Status indicator** — top-left of chat header shows **symbol only** (no text). A fixed dot when idle, a spinning ring when active. `aria-live` delivers status text to screen readers.
 - **Agent box** — specialist agent results (Sourcing, Sommelier, Menu Architect) render in collapsible agent-box components showing inner tool call details and the answer in markdown.
@@ -265,6 +268,43 @@ Verification: `scripts/verify_empty_guard.py` — deterministic stub tests forci
 - **Real-time token streaming** — orchestrator tokens stream to the client immediately via SSE. Each orchestrator round carries a unique `run_id`; the frontend detects `run_id` changes and clears the previous partial answer, so intermediate tool-calling rounds are naturally replaced by the final answer round. On clarification interrupts, any partial text is cleaned up before the clarification UI appears.
 - **Request timeout + error recovery** — 60-minute `AbortController` timeout (matches Cloud Run's max `--timeout=3600`) prevents infinite spinner on backend hangs. Non-200 responses (429 rate limit, 5xx errors) are caught before SSE parsing with user-facing error messages. A `finally` safety net resets the spinner if the stream ends without a `done` event. The backend also emits `done` after `error` events for protocol completeness.
 - **Links open in new tab** — all `<a>` tags from `marked.parse` get `target="_blank" rel="noopener noreferrer"` injected automatically.
+
+---
+
+## Legal & compliance
+
+This is a **free, non-commercial demo** — nothing is sold, and no referral or affiliate
+revenue is earned from any link in an answer. That is not just positioning: BC's Liquor
+Control and Licensing Regulation s.169–170 restricts *any person* (not only licensees) who
+publishes an advertisement in relation to liquor, and "advertisement" is a commercial notion.
+Keeping the project non-commercial and saying so plainly is what keeps it outside that
+reading. **Do not add affiliate or referral links** — that single change would undo it.
+
+What the regulation asks for, and where each piece lives:
+
+| Requirement | Implementation |
+| --- | --- |
+| s.169(1)(e) — carry a responsible-use statement | `.chat-disclaimer` under the chat input, plus the footer on every page |
+| s.170(1)(a) — not a medium minors are expected to reach | one-click 19+ gate on first visit (`index.html` + `app.js`, `localStorage`) |
+| Not affiliated with any retailer or producer | stated in the chat disclaimer, the footer, and `terms.html` |
+| Reliance on stale scraped pricing | `terms.html` — pricing explicitly non-authoritative, no warranty, limitation of liability |
+| BC PIPA — collection, retention, processors | `privacy.html`, backed by the 7-day sweep in [Durable Conversation State](#durable-conversation-state--cloud-sql-postgres-checkpointer) |
+
+Notes for anyone editing this:
+
+- **The disclaimer is UI, not a token.** It was briefly appended to each answer server-side.
+  That fails twice: it clutters the transcript, and a token carrying a new `run_id` makes the
+  frontend delete the bubble accumulated so far (see the streaming note in [UI/UX](#uiux)) —
+  which erased the answer and left only the disclaimer on screen. Keep it in the chat chrome.
+- **Retention has to match the policy.** `privacy.html` states conversation threads are
+  deleted after 7 days; that number is `CLEANUP_MAX_AGE_DAYS` and the Cloud Scheduler job that
+  calls `/internal/cleanup`. Change one, change the other.
+- **The MCP endpoint is public and unauthenticated by design** — it is the interoperability
+  demonstration. It is covered by `terms.html` and rate-limited, but it does serve product and
+  pricing data to any caller, so treat widening it as a decision, not a detail.
+- **Contact / takedown** is `info@sumai.ca`, listed in `terms.html`, `privacy.html`, and the
+  footer. If a retailer asks to be excluded, dropping their tool from `mcp_server.py` and
+  `agent_tools.py` is the intended response.
 
 ---
 
@@ -405,9 +445,14 @@ Vancouver-Sommelier-AI/
 │   ├── google_search_tool.py   # Google Search grounding
 │   └── query_fallback.py       # Shared query fallback (okanagan/everythingwine/legacy)
 ├── frontend/                   # Frontend (vanilla HTML/CSS/JS, no build step)
-│   ├── index.html              # Landing page + fullscreen chat overlay
+│   ├── index.html              # Landing + 19+ gate + fullscreen chat overlay
+│   ├── diagram.html            # Architecture diagram viewer
+│   ├── terms.html              # Terms of use (AI-output disclaimers, liability, BC law)
+│   ├── privacy.html            # Privacy policy (BC PIPA)
 │   ├── styles.css              # Wine color palette, chat + tool badge + agent-box styles
-│   ├── app.js                  # SSE client, CORS API_BASE, image attachment, tool badges, markdown
+│   ├── app.js                  # Age gate, SSE client, image attachment, tool badges, markdown
+│   ├── favicon.svg
+│   ├── images/                 # Architecture diagram asset
 │   └── _worker.js              # Cloudflare Workers proxy (API routing + security filtering)
 ├── scripts/                    # Utility scripts
 │   ├── debug_everythingwine.py # Everything Wine HTML structure debugging
