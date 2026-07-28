@@ -151,16 +151,19 @@ app.add_middleware(
 MAX_IMAGES = 2
 
 # Appended to every answered turn in code rather than via the prompt, because a
-# prompt instruction is advisory and the model will eventually drop it. Two jobs:
-# BC's Liquor Control and Licensing Regulation s.169(1)(e) requires liquor-related
-# material to carry a responsible-use statement, and the pricing/stock we surface is
-# point-in-time data read from retailer sites that a user must confirm before acting.
+# prompt instruction is advisory and the model will eventually drop it. BC's Liquor
+# Control and Licensing Regulation s.169(1)(e) requires liquor-related material to
+# carry a responsible-use statement, and the non-commercial / non-affiliated wording
+# is what keeps this outside the ordinary meaning of "advertisement".
+#
+# Kept short on purpose: the point-in-time nature of the pricing is covered by the
+# site footer ("Prices and availability are indicative — confirm with the retailer
+# before purchase") and in full by terms.html, so repeating it under every single
+# answer only buries the part that has to be there.
 RESPONSE_NOTICE = (
     "\n\n---\n"
-    "*Prices and stock are collected from retailer websites and can change at any "
-    "time — confirm with the store before you buy. This is a non-commercial "
-    "engineering demo and is not affiliated with any retailer or producer. "
-    "19+ in British Columbia. Please drink responsibly.*"
+    "*This is a non-commercial engineering demo and is not affiliated with any "
+    "retailer or producer. 19+ in British Columbia. Please drink responsibly.*"
 )
 
 _graph = None
