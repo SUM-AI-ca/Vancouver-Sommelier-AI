@@ -1186,3 +1186,26 @@ a.tool-row:hover {
         padding: 1.75rem 1.35rem;
     }
 }
+
+/* ── Chat disclaimer ─────────────────────────────── */
+/* The chat is a fullscreen overlay, so the page footer — which carries the
+   responsible-use statement — is hidden while it is open. This line keeps that
+   statement on screen for the whole session without putting it in the message
+   stream, so the conversation stays purely user <-> agent. Aligns with
+   .chat-input-row's 880px measure. */
+
+.chat-disclaimer {
+    max-width: 880px;
+    margin: 0.7rem auto 0;
+    text-align: center;
+    font-size: 0.7rem;
+    line-height: 1.5;
+    color: var(--text-tertiary);
+}
+
+@media (max-width: 640px) {
+    .chat-disclaimer {
+        font-size: 0.65rem;
+        margin-top: 0.55rem;
+    }
+}

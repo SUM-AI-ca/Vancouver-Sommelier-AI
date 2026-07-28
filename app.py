@@ -150,21 +150,12 @@ app.add_middleware(
 # Cap attached images per turn (matches the frontend limit).
 MAX_IMAGES = 2
 
-# Appended to every answered turn in code rather than via the prompt, because a
-# prompt instruction is advisory and the model will eventually drop it. BC's Liquor
-# Control and Licensing Regulation s.169(1)(e) requires liquor-related material to
-# carry a responsible-use statement, and the non-commercial / non-affiliated wording
-# is what keeps this outside the ordinary meaning of "advertisement".
-#
-# Kept short on purpose: the point-in-time nature of the pricing is covered by the
-# site footer ("Prices and availability are indicative — confirm with the retailer
-# before purchase") and in full by terms.html, so repeating it under every single
-# answer only buries the part that has to be there.
-RESPONSE_NOTICE = (
-    "\n\n---\n"
-    "*This is a non-commercial engineering demo and is not affiliated with any "
-    "retailer or producer. 19+ in British Columbia. Please drink responsibly.*"
-)
+# The responsible-use notice required by BC's Liquor Control and Licensing
+# Regulation s.169(1)(e) is NOT appended to answers. It lives in the chat UI as a
+# persistent line under the input box (see .chat-disclaimer in the frontend), which
+# keeps it on screen for the whole session — the page footer alone is not enough,
+# because the chat is a fullscreen overlay that covers it — while leaving the
+# message stream as nothing but the conversation itself.
 
 _graph = None
 # The AsyncConnectionPool behind the Postgres checkpointer (None in InMemorySaver
@@ -732,19 +723,6 @@ async def chat(req: ChatRequest, request: Request):
                 final_text = "".join(_extract_token_texts(msgs[-1])) if msgs else ""
                 if final_text.strip():
                     yield sse({"type": "token", "text": final_text, "run_id": "final-fallback"})
-                    answer_streamed = True
-
-            # Responsible-use and accuracy notice. Only on turns that actually
-            # produced an answer — a turn that ended on a clarification question
-            # hasn't recommended anything yet, so the notice would be noise.
-            #
-            # run_id MUST stay None. The frontend treats a token carrying a *new*
-            # run_id as the start of a fresh orchestrator round and deletes the
-            # bubble built so far (app.js: `aiDiv.remove()`), which is how it drops
-            # partial output from earlier rounds. Tagging the notice with its own id
-            # would therefore wipe the answer and leave only the notice on screen.
-            if answer_streamed and not pending:
-                yield sse({"type": "token", "text": RESPONSE_NOTICE, "run_id": None})
 
             yield sse({"type": "done"})
         except Exception as e:
