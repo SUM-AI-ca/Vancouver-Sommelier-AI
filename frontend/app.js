@@ -1,5 +1,22 @@
 /* Vancouver Sommelier AI — SSE chat client */
 
+/* ── Age gate ────────────────────────────────────────
+   BC's liquor advertising rules expect material about alcohol not to be aimed at
+   minors (Liquor Control and Licensing Regulation s.169-170). The gate is a
+   one-click confirmation, remembered in localStorage so a returning visitor is
+   never asked twice; the inline script in <head> applies the class before first
+   paint so there is no flash. */
+(() => {
+  const confirmBtn = document.getElementById("age-confirm");
+  if (!confirmBtn) return;
+  confirmBtn.addEventListener("click", () => {
+    try {
+      localStorage.setItem("age-confirmed", "1");
+    } catch (e) { /* private mode: gate returns next visit, which is fine */ }
+    document.documentElement.classList.add("age-ok");
+  });
+})();
+
 const API_BASE = "";
 
 const AGENT_TOOL_NAMES = new Set([

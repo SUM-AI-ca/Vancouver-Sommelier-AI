@@ -986,3 +986,163 @@ a.tool-row:hover {
         max-width: 90%;
     }
 }
+
+/* ── Age gate ────────────────────────────────────── */
+/* Shown by default; the inline head script adds .age-ok to <html> for returning
+   visitors so the gate never flashes. */
+
+.age-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background: rgba(42, 31, 34, 0.72);
+    backdrop-filter: blur(4px);
+}
+
+.age-ok .age-gate {
+    display: none;
+}
+
+.age-gate-card {
+    background: var(--background);
+    border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.28);
+    max-width: 420px;
+    width: 100%;
+    padding: 2rem;
+    text-align: center;
+}
+
+.age-gate-card h2 {
+    font-size: 1.375rem;
+    color: var(--text-primary);
+    margin-bottom: 0.75rem;
+}
+
+.age-gate-card p {
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+}
+
+.age-gate-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin: 1.5rem 0 1.25rem;
+}
+
+.age-gate-exit {
+    color: var(--text-tertiary);
+    font-size: 0.9375rem;
+    text-decoration: none;
+}
+
+.age-gate-exit:hover {
+    text-decoration: underline;
+}
+
+.age-gate-fine {
+    font-size: 0.8125rem !important;
+    color: var(--text-tertiary) !important;
+    line-height: 1.55 !important;
+}
+
+.age-gate-fine a {
+    color: var(--primary);
+}
+
+/* ── Hero compliance note ────────────────────────── */
+
+.hero-note {
+    max-width: 620px;
+    margin: 1.75rem auto 0;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--text-tertiary);
+}
+
+/* ── Footer legal block ──────────────────────────── */
+
+.footer-legal {
+    margin-bottom: 0.75rem;
+    line-height: 1.7;
+    color: var(--text-tertiary) !important;
+}
+
+.footer-legal strong {
+    color: var(--text-secondary);
+}
+
+/* ── Legal pages (terms, privacy) ────────────────── */
+
+.legal {
+    max-width: 720px;
+    padding: 3.5rem 1.5rem 4rem;
+}
+
+.legal h1 {
+    font-size: 2rem;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
+}
+
+.legal-meta {
+    font-size: 0.875rem;
+    color: var(--text-tertiary);
+    margin-bottom: 2rem;
+}
+
+.legal h2 {
+    font-size: 1.125rem;
+    color: var(--primary);
+    margin: 2.25rem 0 0.75rem;
+    padding-top: 2.25rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.legal h2:first-of-type {
+    margin-top: 1.5rem;
+    padding-top: 0;
+    border-top: none;
+}
+
+.legal p,
+.legal li {
+    color: var(--text-secondary);
+    line-height: 1.75;
+    margin-bottom: 0.85rem;
+}
+
+.legal ul {
+    padding-left: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.legal li {
+    margin-bottom: 0.35rem;
+}
+
+.legal a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+    .age-gate-card {
+        padding: 1.5rem;
+    }
+    .age-gate-actions {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    .legal {
+        padding: 2.5rem 1.25rem 3rem;
+    }
+}

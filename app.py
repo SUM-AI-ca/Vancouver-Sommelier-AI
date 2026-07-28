@@ -150,6 +150,19 @@ app.add_middleware(
 # Cap attached images per turn (matches the frontend limit).
 MAX_IMAGES = 2
 
+# Appended to every answered turn in code rather than via the prompt, because a
+# prompt instruction is advisory and the model will eventually drop it. Two jobs:
+# BC's Liquor Control and Licensing Regulation s.169(1)(e) requires liquor-related
+# material to carry a responsible-use statement, and the pricing/stock we surface is
+# point-in-time data read from retailer sites that a user must confirm before acting.
+RESPONSE_NOTICE = (
+    "\n\n---\n"
+    "*Prices and stock are collected from retailer websites and can change at any "
+    "time — confirm with the store before you buy. This is a non-commercial "
+    "engineering demo and is not affiliated with any retailer or producer. "
+    "19+ in British Columbia. Please drink responsibly.*"
+)
+
 _graph = None
 # The AsyncConnectionPool behind the Postgres checkpointer (None in InMemorySaver
 # mode). The /internal/cleanup job borrows it to find stale threads by raw SQL.
@@ -716,6 +729,13 @@ async def chat(req: ChatRequest, request: Request):
                 final_text = "".join(_extract_token_texts(msgs[-1])) if msgs else ""
                 if final_text.strip():
                     yield sse({"type": "token", "text": final_text, "run_id": "final-fallback"})
+                    answer_streamed = True
+
+            # Responsible-use and accuracy notice. Only on turns that actually
+            # produced an answer — a turn that ended on a clarification question
+            # hasn't recommended anything yet, so the notice would be noise.
+            if answer_streamed and not pending:
+                yield sse({"type": "token", "text": RESPONSE_NOTICE, "run_id": "notice"})
 
             yield sse({"type": "done"})
         except Exception as e:

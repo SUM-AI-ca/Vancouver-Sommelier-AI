@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy — Vancouver Sommelier AI</title>
+    <meta name="description" content="What Vancouver Sommelier AI collects, how long it is kept, and who processes it.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="site-header">
+    <div class="container">
+        <a class="brand" href="index.html">Vancouver Sommelier AI</a>
+    </div>
+</header>
+
+<main class="legal container">
+    <h1>Privacy Policy</h1>
+    <p class="legal-meta">Last updated: July 28, 2026</p>
+
+    <h2>What this is</h2>
+    <p>
+        Vancouver Sommelier AI is a free, non-commercial engineering demo operated by an
+        individual developer in Vancouver, British Columbia. Nothing is sold here and no
+        account is required. This policy explains what the demo collects when you use it,
+        how long it is kept, and which third parties process it. Personal information is
+        handled in line with British Columbia's Personal Information Protection Act (PIPA).
+    </p>
+
+    <h2>What we collect</h2>
+    <ul>
+        <li><strong>Your messages</strong> — everything you type into the chat.</li>
+        <li><strong>Images you attach</strong> — wine labels, wine lists, or food menus you upload for analysis.</li>
+        <li><strong>Your IP address</strong> — used as the key for per-visitor rate limiting so one user cannot exhaust the demo for everyone.</li>
+        <li><strong>Conversation state</strong> — the thread of the current chat, so follow-up questions like "the second one" resolve correctly.</li>
+    </ul>
+    <p>
+        We do not ask for your name, email, or any account details, and we have no
+        advertising or analytics trackers on this site.
+    </p>
+
+    <h2>How long it is kept</h2>
+    <p>
+        Conversation threads are stored in a managed Postgres database and are
+        <strong>automatically deleted after 7 days</strong>. Closing the chat window also
+        discards the thread immediately — each time you reopen the chat you start a fresh
+        session with no memory of previous ones. Uploaded images are held only for the
+        duration of the turn that analyses them; after extraction the image is replaced in
+        the conversation by its text description and the image data is not retained.
+    </p>
+
+    <h2>Who processes it</h2>
+    <p>
+        <strong>Google (Gemini on Vertex AI)</strong> — Your messages and any images you
+        attach are sent to Google Cloud for processing by the Gemini models that power the
+        agent. This is subject to
+        <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google's Privacy Policy</a>
+        and the Google Cloud terms for Vertex AI. Some answers also use Google Search
+        grounding, which sends a search query to Google.
+    </p>
+    <p>
+        <strong>Cloudflare</strong> — The site is served through Cloudflare, which acts as
+        a reverse proxy and processes all traffic including IP addresses and request
+        headers, under its own
+        <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+    </p>
+    <p>
+        <strong>Google Cloud Run and Cloud SQL</strong> — The backend and the conversation
+        database run on Google Cloud infrastructure.
+    </p>
+    <p>
+        <strong>Retailer websites</strong> — When you ask about availability, the agent
+        queries the public product-search endpoints of Vancouver liquor retailers. Your
+        identity is never sent to them; only the search terms derived from your question.
+    </p>
+
+    <h2>Where it is processed</h2>
+    <p>
+        The providers above process data on servers outside Canada, primarily in the
+        United States. Information stored outside Canada may be accessible to foreign
+        courts and law enforcement under the laws of that country.
+    </p>
+
+    <h2>Please don't share sensitive information</h2>
+    <p>
+        This is a demo, not a secure system. Do not type confidential, personal, or
+        sensitive information into the chat, and check photos before uploading them — a
+        picture of a restaurant wine list or menu may capture things you did not intend
+        to share.
+    </p>
+
+    <h2>Your rights</h2>
+    <p>
+        Under PIPA you may request access to personal information we hold about you, ask
+        how it has been used, request a correction, or ask us to delete it. Because
+        threads are keyed to a random session identifier and expire after 7 days, in
+        practice the fastest deletion is simply to close the chat. For anything else,
+        email <a href="mailto:info@sumai.ca">info@sumai.ca</a> and we will
+        respond within 30 days.
+    </p>
+    <p>
+        If you are not satisfied with our response, you may contact the Office of the
+        Information and Privacy Commissioner for British Columbia at
+        <a href="https://www.oipc.bc.ca" target="_blank" rel="noopener noreferrer">oipc.bc.ca</a>.
+    </p>
+
+    <h2>Changes</h2>
+    <p>
+        We may update this policy. The "Last updated" date above reflects the most recent
+        change.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+        Questions about this policy: <a href="mailto:info@sumai.ca">info@sumai.ca</a>
+    </p>
+</main>
+
+<footer class="site-footer">
+    <div class="container">
+        <p class="footer-legal">
+            Non-commercial engineering demo &middot; Not affiliated with, endorsed by, or sponsored by any retailer or producer<br>
+            Prices and availability are indicative &mdash; confirm with the retailer before purchase<br>
+            <strong>19+ in British Columbia. Please drink responsibly.</strong>
+        </p>
+        <p>
+            <a href="terms.html">Terms of Use</a> &middot;
+            <a href="privacy.html">Privacy</a> &middot;
+            <a href="mailto:info@sumai.ca">Contact</a>
+        </p>
+    </div>
+</footer>
+
+</body>
+</html>

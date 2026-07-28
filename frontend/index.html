@@ -9,8 +9,34 @@
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
+    <script>
+        // Runs before first paint so a returning visitor never sees the gate flash.
+        try {
+            if (localStorage.getItem("age-confirmed") === "1") {
+                document.documentElement.classList.add("age-ok");
+            }
+        } catch (e) { /* private mode: fall through and show the gate */ }
+    </script>
 </head>
 <body>
+
+<div class="age-gate" id="age-gate" role="dialog" aria-modal="true" aria-labelledby="age-gate-title">
+    <div class="age-gate-card">
+        <h2 id="age-gate-title">Are you 19 or older?</h2>
+        <p>
+            This site is a non-commercial engineering demo that discusses alcoholic
+            beverages. The legal drinking age in British Columbia is 19.
+        </p>
+        <div class="age-gate-actions">
+            <button class="btn-primary" id="age-confirm" type="button">Yes, I am 19+</button>
+            <a class="age-gate-exit" href="https://www.google.com">Leave</a>
+        </div>
+        <p class="age-gate-fine">
+            Nothing is sold here. By continuing you agree to our
+            <a href="terms.html">Terms of Use</a> and <a href="privacy.html">Privacy Policy</a>.
+        </p>
+    </div>
+</div>
 
 <header class="site-header">
     <div class="container">
@@ -27,6 +53,12 @@
             guidance, all in one conversation.
         </p>
         <button class="btn-primary btn-large" id="open-chat">Start chatting</button>
+        <p class="hero-note">
+            A non-commercial engineering demo built for the Google for Startups AI Agent
+            Challenge. No products are sold here, and no referral or affiliate revenue is
+            earned from any link. Prices and stock are indicative &mdash; confirm with the
+            retailer before you buy.
+        </p>
     </section>
 
     <section class="capabilities container">
@@ -90,6 +122,21 @@
         </div>
     </div>
 </div>
+
+<footer class="site-footer">
+    <div class="container">
+        <p class="footer-legal">
+            Non-commercial engineering demo &middot; Not affiliated with, endorsed by, or sponsored by any retailer or producer<br>
+            Prices and availability are indicative &mdash; confirm with the retailer before purchase<br>
+            <strong>19+ in British Columbia. Please drink responsibly.</strong>
+        </p>
+        <p>
+            <a href="terms.html">Terms of Use</a> &middot;
+            <a href="privacy.html">Privacy</a> &middot;
+            <a href="mailto:info@sumai.ca">Contact</a>
+        </p>
+    </div>
+</footer>
 
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="app.js"></script>
