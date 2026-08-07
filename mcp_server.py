@@ -4,7 +4,8 @@ Serves the six Vancouver retailer search tools over the Model Context Protocol
 (Streamable HTTP). This is the canonical tool host for the Sourcing Agent, which
 consumes these tools as an MCP client (see mcp_client.py). app.py mounts this
 server at /mcp, so the same endpoint is reachable by any external MCP client
-(MCP Inspector, Claude Desktop, ADK agents) at https://wineaiagent.com/mcp.
+(MCP Inspector, Claude Desktop, ADK agents) at `<deployment-host>/mcp`. The
+deployment is unlisted — its host is shared privately, not published here.
 
 Tool names, signatures, docstrings, and JSON envelopes are kept identical to the
 legacy in-process wrappers in agent_tools.py — the LLM-facing schema and the

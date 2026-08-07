@@ -1,3 +1,8 @@
+// The site is unlisted — shared by private link, never advertised. This is sent on
+// every response (see the two set() calls below) so that assets which cannot carry
+// a <meta robots> tag are still excluded from search indexes.
+const NOINDEX = "noindex, nofollow, noarchive, nosnippet, noimageindex";
+
 const BLOCKED_PATTERN =
   /(?:^\/\.env|^\/\.git|\/wp-admin|\/wp-login|\/wp-includes|\/xmlrpc\.php|\/wp-content|\/\.aws|\/\.ssh|\/\.DS_Store|\/config\.json$|\/\.htaccess|\/\.htpasswd|\/administrator|\/phpmyadmin|\/cgi-bin)/i;
 
@@ -47,12 +52,22 @@ export default {
       responseHeaders.delete("access-control-allow-methods");
       responseHeaders.delete("access-control-allow-headers");
 
+      responseHeaders.set("X-Robots-Tag", NOINDEX);
+
       return new Response(response.body, {
         status: response.status,
         headers: responseHeaders,
       });
     }
 
-    return env.ASSETS.fetch(request);
+    // Static assets. The HTML pages carry their own <meta robots>, but images,
+    // CSS, JS, and robots.txt itself can only be marked via the header — so it
+    // is set here, on everything the site serves. Copying the response through
+    // `new Response(body, res)` is what makes the headers mutable, and it keeps
+    // a null-body status (304 on a conditional request) intact.
+    const assetResponse = await env.ASSETS.fetch(request);
+    const out = new Response(assetResponse.body, assetResponse);
+    out.headers.set("X-Robots-Tag", NOINDEX);
+    return out;
   },
 };

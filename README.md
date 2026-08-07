@@ -3,7 +3,7 @@
 > 2026 Google for Startups AI Agents Challenge — Track 1: Build
 
 A multi-agent AI drinks concierge for the Vancouver market. Built on a LangGraph Supervisor + 3 specialist agent architecture, it searches real-time inventory and pricing across 6 Vancouver-area retail chains (including BC Liquor Stores' 200+ locations province-wide and Everything Wine's 4 Lower Mainland stores), provides expert knowledge via Google Search grounding, and offers food pairing guidance. Supports both B2C (consumer recommendations) and B2B (beverage menu design for F&B businesses).
-Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API) + Cloud SQL Postgres (conversation state). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), retailer tools served over **MCP (Model Context Protocol)** with a public endpoint at `wineaiagent.com/mcp`, FastAPI real-time SSE token streaming with heartbeat keepalive, durable cross-instance conversation persistence (Postgres checkpointer + session-end cleanup + scheduled abandoned-thread sweep), multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, Gemini empty-response guard, transient API-failure retry (499/429/5xx backoff), grounding deep-link resolution, request timeout + error recovery, LLM-as-judge quality eval pipeline.
+Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API) + Cloud SQL Postgres (conversation state). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), retailer tools served over **MCP (Model Context Protocol)** on an externally reachable `/mcp` endpoint, FastAPI real-time SSE token streaming with heartbeat keepalive, durable cross-instance conversation persistence (Postgres checkpointer + session-end cleanup + scheduled abandoned-thread sweep), multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, Gemini empty-response guard, transient API-failure retry (499/429/5xx backoff), grounding deep-link resolution, request timeout + error recovery, LLM-as-judge quality eval pipeline.
 
 ---
 
@@ -46,7 +46,7 @@ LangGraph Supervisor (agent.py — Gemini 3.6 Flash, max 7 tool rounds)
     │   │    └─ MCP client → MCP Server "vancouver-retailers" (/mcp)       │
     │   │         └─ bcliquor, everythingwine, okanagan_cellars,          │
     │   │            suttonplace, marquis, legacy                         │
-    │   │       (public Streamable HTTP endpoint: wineaiagent.com/mcp)     │
+    │   │       (also served externally: <deployment-host>/mcp)           │
     │   │                                                                  │
     │   │  Sommelier Agent ── pairing + grounding (max 3 rounds,           │
     │   │                     single-round batched parallel lookups)       │
@@ -69,12 +69,14 @@ Real-time SSE token streaming (15s heartbeat keepalive) → frontend (tool badge
 LangSmith tracing (optional)
 ```
 
-A full Mermaid diagram with color-coded nodes (agents, tools, gates, stores) is available:
+The diagram above is generated from [`draw_graph.py`](draw_graph.py) — that file is the single place to edit when the architecture changes, and it writes the copy the site serves, so the published diagram cannot drift from the repo's:
 
 ```bash
-python draw_graph.py          # outputs graph_mermaid.md + graph.png
-python draw_graph_v2.py       # public-facing variant (retailer names collapsed into the MCP server) → graph_v2_mermaid.md + graph_v2.png
+python draw_graph.py     # → graph_mermaid.md + graph.png + frontend/images/architecture-diagram.png
+python draw_graph_v2.py  # collapsed variant (retailers folded into the MCP server) → graph_v2_mermaid.md + graph_v2.png
 ```
+
+`draw_graph_v2.py` imports `build_mermaid()` from `draw_graph.py` rather than keeping its own copy of the source, so the two variants always describe the same system. Rendering goes through mermaid.ink's `pako:` (deflate) URL form — the plain-base64 form now exceeds that server's request-URI limit and returns HTTP 414.
 
 ---
 
@@ -113,13 +115,15 @@ The six retailer search tools are not bound to the agent in-process — they are
 
 **Client — the Sourcing Agent itself** ([`mcp_client.py`](mcp_client.py)). At first use, the Sourcing Agent loads its toolset from the MCP server via `langchain-mcp-adapters` (`MultiServerMCPClient`, `streamable_http` transport) — a self-connection to the mounted endpoint. Each tool invocation opens its own short-lived MCP session, so the agent's **all-6-retailers-in-parallel fan-out stays fully parallel** over the protocol. If the endpoint is unreachable (e.g. running the eval harness without the server), the loader logs an ERROR and falls back to the in-process tools — same tools, different transport.
 
-**Public endpoint — `https://wineaiagent.com/mcp`.** The Cloudflare worker proxies `/mcp` to Cloud Run (injecting the proxy secret), so any external MCP client — MCP Inspector, Claude Desktop, ADK agents — can discover and call the same retailer tools the agent uses:
+**External endpoint — `https://<deployment-host>/mcp`.** The Cloudflare worker proxies `/mcp` to Cloud Run (injecting the proxy secret), so any external MCP client — MCP Inspector, Claude Desktop, ADK agents — can discover and call the same retailer tools the agent uses:
 
 ```bash
 npx @modelcontextprotocol/inspector
-# Transport: "Streamable HTTP" → URL: https://wineaiagent.com/mcp
+# Transport: "Streamable HTTP" → URL: https://<deployment-host>/mcp
 # → tools/list shows the 6 retailer tools → call any of them live
 ```
+
+> The deployment is **unlisted** — see [Access & discoverability](#access--discoverability). Its host is shared privately rather than written down here, so substitute your own.
 
 Security model: direct Cloud Run access to `/mcp` (like `/api/*`) is rejected without the `X-Proxy-Secret` header that only the Cloudflare worker injects. The tools are read-only searches over each retailer's public product-discovery endpoints.
 
@@ -138,15 +142,15 @@ Frontend and backend are deployed separately.
 
 | Layer | Service | URL / Identifier |
 |-------|---------|------------------|
-| **Frontend** | Cloudflare Pages | `wineaiagent.com` / `www.wineaiagent.com` |
+| **Frontend** | Cloudflare Pages | project `bc-wine-ai-agents` — custom domain not published (see [Access & discoverability](#access--discoverability)) |
 | **Backend API** | Google Cloud Run | `bc-wine-agent-135257828500.us-west1.run.app` |
 | **Conversation state** | Cloud SQL for PostgreSQL 16 | instance `wine-agent-pg` (us-west1), DB `checkpoints`, unix-socket via `/cloudsql/wine-agent-jh-2026:us-west1:wine-agent-pg` |
 | **Session sweep** | Cloud Scheduler | job `cleanup-abandoned-sessions` — daily 04:00 America/Vancouver → `POST /internal/cleanup` |
 
 - Frontend (`frontend/`) is deployed directly to Cloudflare Pages. No build command, output directory `frontend/`.
 - Backend is built as a Docker image and deployed to Cloud Run. Gemini API is called via GCP service account authentication.
-- Frontend JS (`frontend/app.js`) calls the Cloud Run URL directly via `API_BASE`, and `app.py`'s `CORSMiddleware` allows `wineaiagent.com` / `www.wineaiagent.com` origins.
-- For local development, `API_BASE` is empty, so requests go to the same server's `/api/*` endpoints.
+- `API_BASE` in `frontend/app.js` is empty, so `/api/*` is always same-origin: in production the Cloudflare worker (`frontend/_worker.js`) proxies it to Cloud Run, and locally it hits the same uvicorn server. **No cross-origin request is ever made**, which is why `app.py`'s `CORSMiddleware` is only relevant to a cross-origin dev/test client — its allow-list comes from the `ALLOWED_ORIGINS` env var (comma-separated, default `http://localhost:8000`) rather than being hardcoded.
+- Cloud Run serves the API only. `frontend/` is in `.dockerignore`, so the run.app URL returns 404 at `/` and `/api/*` + `/mcp` are rejected without the worker's `X-Proxy-Secret` — the site is not viewable through the backend URL.
 
 ### Cloud Run Deployment
 
@@ -169,19 +173,42 @@ Required IAM roles for the Cloud Run service account:
 
 ### Cloudflare Pages Deployment
 
-Deploys are pushed from the CLI with Wrangler (direct upload — no git integration):
+**The Pages project is connected to this Git repository, so a push to `main` builds and deploys the frontend automatically.** Editing anything under `frontend/` and pushing is the normal path — no CLI step.
+
+A manual deploy is only for pushing frontend changes ahead of a commit:
 
 ```bash
 npx wrangler pages deploy --project-name=bc-wine-ai-agents --branch=main
 ```
 
-> The Pages project on the Cloudflare dashboard is named **`bc-wine-ai-agents`** — the `name` field in the local `wrangler.toml` (`bcwineaiagents`) is *not* it, so always pass `--project-name` explicitly. `--branch=main` targets the production branch (a direct-upload deploy without it can land as a preview).
+> A manual upload becomes the live production deployment immediately, but it does **not** update the Git connection — the next push to `main` rebuilds from the repo and supersedes it. Never leave the two out of sync: if you deploy manually, commit the same files.
+
+> The Pages project on the Cloudflare dashboard is named **`bc-wine-ai-agents`**. The `name` field in `wrangler.toml` now matches it, but keep passing `--project-name` explicitly anyway. `--branch=main` targets the production branch (a direct-upload deploy without it can land as a preview).
 
 Cloudflare Pages project settings:
 - **Production branch**: `main`
 - **Build command**: (none)
 - **Build output directory**: `frontend` (from `pages_build_output_dir` in `wrangler.toml`)
-- **Custom domains**: `wineaiagent.com`, `www.wineaiagent.com`
+- **Custom domain**: configured on the Cloudflare dashboard, not recorded here — see below
+
+### Access & discoverability
+
+The deployment is **unlisted**: anyone holding the link can use it, but nothing points at it and no search engine should carry it. The custom domain is therefore kept out of this repository — code and docs refer to `<deployment-host>` and read real values from the environment (`ALLOWED_ORIGINS`, `DB_E2E_BASE`).
+
+Three layers keep it out of search results, because `robots.txt` alone is only a request that a crawler may ignore:
+
+| Layer | Where | Covers |
+|---|---|---|
+| `robots.txt` — `Disallow: /` | [`frontend/robots.txt`](frontend/robots.txt) | Well-behaved crawlers, all paths |
+| `<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">` | `index.html`, `diagram.html`, `terms.html`, `privacy.html` | The HTML pages |
+| `X-Robots-Tag` response header | [`frontend/_worker.js`](frontend/_worker.js) | **Everything**, including assets that cannot carry a meta tag — the architecture PNG, `favicon.svg`, `app.js`, `styles.css` |
+
+Two caveats worth knowing:
+
+- **Cloudflare Pages always also serves `<project>.pages.dev`**, plus a per-deployment preview hostname. Those are live and cannot be turned off from this repo — the noindex layers above cover them, but they remain reachable by anyone who guesses the project name. Blocking them outright needs a Host allow-list in `_worker.js` or a Cloudflare Access policy.
+- **noindex removes an already-indexed page only on the next crawl.** For immediate removal, use the Google Search Console *Removals* tool on the property.
+
+Unlisted is link-based, not authenticated. If the requirement becomes "only these specific people", put **Cloudflare Access** in front of the Pages project — that is a real identity check, not obscurity.
 
 ---
 
@@ -246,7 +273,7 @@ Conversation state (message history, pending interrupts) is persisted in a **sha
 2. **Abandoned-thread sweep** — `POST /internal/cleanup` deletes every thread whose newest checkpoint is older than the cutoff (`CLEANUP_MAX_AGE_DAYS`, default 7). Called daily at 04:00 America/Vancouver by the Cloud Scheduler job `cleanup-abandoned-sessions` against the run.app URL directly (the path is outside `/api/`, so the proxy guard doesn't apply — it has its own `X-Cleanup-Secret` header auth instead). Supports `?dry_run=1` (count only) and `?days=N`; real deletions are floored at `CLEANUP_MIN_AGE_DAYS=1` so a leaked secret can't wipe everything with `days=0`.
 3. **Fresh thread per open** — the frontend never reuses a `thread_id` across chat opens, so nothing accumulates per user.
 
-**E2E verification.** `python -m scripts.db_e2e_smoke` drives the live public path (worker-proxied, no secrets needed): health → fresh session → **two-turn recall of a distinctive budget** (proves the checkpoint is written to and read back from Postgres) → **forget after `/end`** (proves `adelete_thread`) → 403 on unauthenticated `/internal/cleanup`.
+**E2E verification.** `DB_E2E_BASE=https://<your-host> python -m scripts.db_e2e_smoke` drives the live public path (worker-proxied, no secrets needed): health → fresh session → **two-turn recall of a distinctive budget** (proves the checkpoint is written to and read back from Postgres) → **forget after `/end`** (proves `adelete_thread`) → 403 on unauthenticated `/internal/cleanup`.
 
 Implementation: `lifespan()` + `end_session` + `cleanup_sessions` in [`app.py`](app.py), `build_graph(checkpointer)` in [`agent.py`](agent.py), `endSession()` + `pagehide` hook in [`frontend/app.js`](frontend/app.js), smoke test in [`scripts/db_e2e_smoke.py`](scripts/db_e2e_smoke.py).
 
@@ -467,15 +494,16 @@ Vancouver-Sommelier-AI/
 │   ├── styles.css              # Wine color palette, chat + tool badge + agent-box styles
 │   ├── app.js                  # Age gate, SSE client, image attachment, tool badges, markdown
 │   ├── favicon.svg
-│   ├── images/                 # Architecture diagram asset
-│   └── _worker.js              # Cloudflare Workers proxy (API routing + security filtering)
+│   ├── robots.txt              # Disallow: / — the deployment is unlisted
+│   ├── images/                 # Architecture diagram asset (written by draw_graph.py)
+│   └── _worker.js              # Cloudflare Workers proxy (API routing + security filtering + X-Robots-Tag)
 ├── scripts/                    # Utility scripts
 │   ├── debug_everythingwine.py # Everything Wine HTML structure debugging
 │   ├── mcp_smoke.py            # MCP smoke test (tools load + live call over the protocol)
 │   ├── db_e2e_smoke.py         # Live E2E smoke of the Postgres checkpointer (recall / forget / cleanup auth)
 │   └── verify_empty_guard.py   # Empty-response guard tests (stubbed retries + live regression)
-├── draw_graph.py               # Architecture Mermaid diagram generator
-├── draw_graph_v2.py            # Same diagram, retailer names collapsed into the MCP server (public-facing)
+├── draw_graph.py               # Architecture Mermaid diagram generator — single source of truth; also writes frontend/images/
+├── draw_graph_v2.py            # Same diagram via build_mermaid(show_stores=False), retailers collapsed into the MCP server
 ├── tests/                      # Golden-query quality evaluation
 │   ├── golden_queries.py       # Golden queries (multiple categories)
 │   ├── metrics.py              # Deterministic metrics (orchestration, hallucination, coverage, structure)
@@ -535,6 +563,7 @@ Full reference:
 | `CLEANUP_MAX_AGE_DAYS` | `7` | Default cutoff for the abandoned-thread sweep |
 | `PROXY_SECRET` | (empty) | Shared secret the Cloudflare worker injects as `X-Proxy-Secret`; when set, direct Cloud Run access to `/api/*` and `/mcp` is rejected without it |
 | `CF_TURNSTILE_SECRET` | (unset) | Cloudflare Turnstile server key; unset ⇒ bot verification disabled (current production setting) |
+| `ALLOWED_ORIGINS` | `http://localhost:8000` | Comma-separated CORS allow-list. Production needs nothing here — `API_BASE` is empty, so the browser never goes cross-origin (see [Access & discoverability](#access--discoverability)) |
 | `GOOGLE_CLOUD_PROJECT` | `wine-agent-jh-2026` | GCP project for Gemini calls |
 | `GOOGLE_CLOUD_LOCATION` | `global` | Gemini location |
 | `SOURCING_VIA_MCP` / `MCP_SELF_URL` | see [MCP](#mcp--model-context-protocol) | Sourcing-agent transport switches |
@@ -592,7 +621,7 @@ npx wrangler pages deploy --project-name=bc-wine-ai-agents --branch=main
 ## Tech Stack
 
 - **LangGraph** — multi-agent Supervisor + 3 specialist sub-graph orchestration
-- **MCP (Model Context Protocol)** — FastMCP server `vancouver-retailers` (mcp==1.27.2) serving the 6 retailer tools over Streamable HTTP; consumed by the Sourcing Agent via **langchain-mcp-adapters** (0.2.2); public endpoint at `wineaiagent.com/mcp`
+- **MCP (Model Context Protocol)** — FastMCP server `vancouver-retailers` (mcp==1.27.2) serving the 6 retailer tools over Streamable HTTP; consumed by the Sourcing Agent via **langchain-mcp-adapters** (0.2.2); also reachable by external MCP clients at `<deployment-host>/mcp`
 - **Gemini 3.6 Flash** — every agent (Supervisor, Sourcing, Sommelier, Menu Architect) plus validation and the vision node
 - **Gemini 3.1 Pro Preview** — LLM-as-judge only (eval pipeline), kept distinct so the system never grades its own work
 - **Google Search grounding** — reviews/scores/factual knowledge (Gemini Enterprise Agent Platform native)

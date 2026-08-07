@@ -34,7 +34,7 @@
 | Where | Value | Purpose |
 |---|---|---|
 | `vision.py:185` `_VISION_TIMEOUT` | 45s | Vision LLM call (both paths) |
-| `app.py:213` `HEARTBEAT_SECONDS` | 15s | SSE keepalive ping when the stream is idle |
+| `app.py:221` `HEARTBEAT_SECONDS` | 15s | SSE keepalive ping when the stream is idle |
 | `mcp_client.py:94` MCP `timeout` | 120s | Retailer `tools/call` over MCP (slow scrapes exceed the 30s default) |
 | `mcp_client.py:95` MCP `sse_read_timeout` | 300s | MCP stream read |
 | `tools/bcliquor_tool.py:98` | 20s | HTTP client |
@@ -48,8 +48,8 @@
 
 | Where | Value | Purpose |
 |---|---|---|
-| `app.py:544` | 30/hour | API chat endpoint rate limit (per IP) |
-| `app.py:151` / `frontend/app.js:56` | MAX_IMAGES=2 | Max images per chat turn |
+| `app.py:552` | 30/hour | API chat endpoint rate limit (per IP) |
+| `app.py:159` / `frontend/app.js:56` | MAX_IMAGES=2 | Max images per chat turn |
 | `frontend/app.js:57` | MAX_DIM=2048px | Image downscale longest edge |
 
 ## Tool-Specific Defaults

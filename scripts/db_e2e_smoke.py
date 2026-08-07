@@ -15,8 +15,9 @@ What it checks (each prints PASS/FAIL):
   5. cleanup-guard POST {run.app}/internal/cleanup with no secret → 403
                    (verifies the abandoned-session sweeper's auth gate)
 
-Run:
-    python -m scripts.db_e2e_smoke
+Run (DB_E2E_BASE is required — the deployment is unlisted, so its host is not
+hardcoded here):
+    DB_E2E_BASE=https://<your-host>  python -m scripts.db_e2e_smoke   # live
     DB_E2E_BASE=http://localhost:8080 python -m scripts.db_e2e_smoke   # local app
 
 Exit code 0 = all critical checks passed, 1 = a critical check failed.
@@ -36,7 +37,14 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-BASE = os.getenv("DB_E2E_BASE", "https://wineaiagent.com").rstrip("/")
+# The site is unlisted, so its host is not hardcoded here — pass it in.
+BASE = os.getenv("DB_E2E_BASE", "").rstrip("/")
+if not BASE:
+    sys.exit(
+        "DB_E2E_BASE is not set. Point it at the deployment you want to smoke-test, e.g.\n"
+        "    DB_E2E_BASE=https://<your-host> python -m scripts.db_e2e_smoke\n"
+        "    DB_E2E_BASE=http://localhost:8080 python -m scripts.db_e2e_smoke"
+    )
 # Direct Cloud Run URL for the /internal/* path (NOT proxied by the worker, which
 # only forwards /api/ and /mcp). Used solely for the no-auth 403 guard check.
 RUNAPP = os.getenv(

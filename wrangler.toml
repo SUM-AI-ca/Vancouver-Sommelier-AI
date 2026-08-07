@@ -1,4 +1,6 @@
-name = "bcwineaiagents"
+# Matches the real Cloudflare Pages project name (it previously did not, so a bare
+# `wrangler pages deploy` would have targeted the wrong project).
+name = "bc-wine-ai-agents"
 compatibility_date = "2024-09-01"
 pages_build_output_dir = "./frontend"
 

@@ -1,0 +1,8 @@
+# Unlisted demo. Reachable by anyone holding the link; not to be indexed.
+# Enforced in three places, because robots.txt alone is only a request:
+#   1. this file        — keeps well-behaved crawlers off every path
+#   2. <meta robots>    — noindex on each HTML page (index/diagram/terms/privacy)
+#   3. X-Robots-Tag     — set on every response in _worker.js, so non-HTML assets
+#                         (the architecture PNG, favicon, JS, CSS) are covered too
+User-agent: *
+Disallow: /

@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "bcwineaiagents",
+  "name": "bc-wine-ai-agents",
   "main": "_worker.js",
   "compatibility_date": "2026-05-30",
   "observability": {

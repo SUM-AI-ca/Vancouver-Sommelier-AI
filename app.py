@@ -136,13 +136,21 @@ async def verify_proxy_secret(request: Request, call_next):
     return await call_next(request)
 
 
+# In production the browser never makes a cross-origin call: the frontend's
+# API_BASE is empty, so /api/* is same-origin and the Cloudflare worker proxies it
+# to Cloud Run (stripping the CORS headers off the response on the way back). This
+# middleware therefore only matters to a cross-origin dev or test client, so the
+# allowed origins come from the environment — the site's domain is deliberately not
+# written into the source. Set ALLOWED_ORIGINS (comma-separated) to add more.
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:8000").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://wineaiagent.com",
-        "https://www.wineaiagent.com",
-        "http://localhost:8000",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -803,9 +811,10 @@ async def health():
 
 
 # MCP endpoint — the vancouver-retailers tool server (mcp_server.py). The Sourcing
-# Agent self-connects here (mcp_client.py); external MCP clients reach it through
-# the Cloudflare worker at https://wineaiagent.com/mcp. Must be mounted before the
-# catch-all "/" static mount.
+# Agent self-connects here (mcp_client.py); external MCP clients reach it at the
+# deployment's own /mcp path, through the Cloudflare worker (which injects the proxy
+# secret). The site is unlisted, so the host is shared privately rather than
+# published here. Must be mounted before the catch-all "/" static mount.
 app.mount("/mcp", retailer_mcp.streamable_http_app())
 
 if os.path.isdir("frontend"):
