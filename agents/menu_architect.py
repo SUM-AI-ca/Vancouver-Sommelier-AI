@@ -46,6 +46,11 @@ Offer 3-4 price tiers within each category where possible.
    starters pairings, another for mains, another for desserts). Do NOT dump all products \
    into a single sourcing call — smaller, focused requests give better coverage across \
    all Vancouver retailers.
+   **Emit those sourcing calls TOGETHER in ONE response — batch them as parallel \
+   tool_calls in a single turn.** The course groups do not depend on each other and run \
+   concurrently, so issuing them one per round makes the menu take several times longer \
+   for no gain. Only hold a call back for a later round when it genuinely needs an \
+   earlier call's result.
 3. Use search_web_grounded_tool only for pairing ideas or facts you're unsure of — cite
    sources, summarize, never reproduce full review text.
 
@@ -68,7 +73,8 @@ def _get_graph():
     if _graph is None:
         _graph = build_react_subagent(
             MENU_ARCHITECT_SYSTEM_PROMPT, MENU_ARCHITECT_TOOLS,
-            temperature=0.3, max_rounds=5, model="gemini-3.1-pro-preview",
+            temperature=0.3, max_rounds=5, model="gemini-3.6-flash",
+            name="menu_architect",
         )
     return _graph
 

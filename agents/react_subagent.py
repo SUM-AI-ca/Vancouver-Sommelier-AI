@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from models import get_llm
+from models import ainvoke_with_retry, get_llm
 from safety import tool_error_to_json
 from state import AgentState
 
@@ -29,6 +29,7 @@ def build_react_subagent(
     temperature: float = 0.1,
     max_rounds: int = 5,
     model: str | None = None,
+    name: str = "subagent",
 ):
     """Compile a bounded ReAct sub-graph over `tools` with `system_prompt`.
 
@@ -41,7 +42,7 @@ def build_react_subagent(
         if _count_tool_rounds(state["messages"]) < max_rounds:
             llm = llm.bind_tools(tools)
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
-        response = await llm.ainvoke(messages)
+        response = await ainvoke_with_retry(llm, messages, label=name)
         # Gemini intermittently returns an empty candidate; a blank reply with no
         # tool_calls would end this specialist with no answer. Retry a couple of times.
         attempts = 0
@@ -51,7 +52,7 @@ def build_react_subagent(
             and attempts < 2
         ):
             attempts += 1
-            response = await llm.ainvoke(messages)
+            response = await ainvoke_with_retry(llm, messages, label=name)
         return {"messages": [response]}
 
     def should_continue(state: AgentState) -> str:

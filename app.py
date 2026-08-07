@@ -341,18 +341,21 @@ INNER_TOOL_LABELS = {
 def _summarize_agent_output(output) -> dict:
     """Summarize an agent tool's output including per-inner-tool breakdowns.
 
-    Returns {"summary": [...], "count": N, "inner_tools": [...]}.
+    Returns {"summary": [...], "count": N, "inner_tools": [...], "error": str | None}.
+    `error` is set when the specialist returned a status="error" envelope (see
+    agents/react_subagent.run_subagent_json) so the UI can label the box failed rather
+    than showing it as a normal completion with no results.
     """
     if hasattr(output, "content"):
         output = output.content
     if not isinstance(output, str):
-        return {"summary": [], "count": 0, "inner_tools": []}
+        return {"summary": [], "count": 0, "inner_tools": [], "error": None}
     try:
         data = json.loads(output)
     except (json.JSONDecodeError, TypeError):
-        return {"summary": [], "count": 0, "inner_tools": []}
+        return {"summary": [], "count": 0, "inner_tools": [], "error": None}
     if not isinstance(data, dict):
-        return {"summary": [], "count": 0, "inner_tools": []}
+        return {"summary": [], "count": 0, "inner_tools": [], "error": None}
 
     inner_tools_raw = data.get("inner_tools") if isinstance(data.get("inner_tools"), list) else []
     inner_tools = []
@@ -369,11 +372,17 @@ def _summarize_agent_output(output) -> dict:
             "count": len(rows),
         })
 
+    status = data.get("status")
+    error = None
+    if status and status != "ok":
+        error = str(data.get("message") or f"status: {status}")[:300]
+
     summary = _summarize_tool_output(output)
     return {
         "summary": summary,
         "count": len(summary),
         "inner_tools": inner_tools,
+        "error": error,
     }
 
 
@@ -618,6 +627,15 @@ async def chat(req: ChatRequest, request: Request):
         # chunks were dropped, this stays False and we fall back to state below.
         answer_streamed = False
 
+        # The Sourcing Agent's retailer tools are StructuredTool wrappers around the
+        # MCP adapter tools (mcp_client._flat_tool), so ONE call produces two nested
+        # runs with the same name and the same args. Both fire on_tool_start/on_tool_end,
+        # which made the stream show every retailer search twice — and the inner run
+        # yields raw content blocks that summarize to zero rows, so the pair also
+        # disagreed on the count. Emit only the outermost run of a given tool name.
+        tool_run_names: dict[str, str] = {}
+        nested_tool_runs: set[str] = set()
+
         try:
             async for event in graph.astream_events(inputs, config=config, version="v2"):
                 kind = event["event"]
@@ -641,14 +659,24 @@ async def chat(req: ChatRequest, request: Request):
                         })
 
                 if kind == "on_tool_start":
+                    run_id = event.get("run_id")
+                    tool_run_names[run_id] = name
+                    if any(
+                        tool_run_names.get(p) == name
+                        for p in (event.get("parent_ids") or [])
+                    ):
+                        nested_tool_runs.add(run_id)
+                        continue
                     data = event.get("data", {})
                     yield sse({
                         "type": "tool_start",
                         "tool": name,
-                        "run_id": event.get("run_id"),
+                        "run_id": run_id,
                         "args": data.get("input"),
                     })
                 elif kind == "on_tool_end":
+                    if event.get("run_id") in nested_tool_runs:
+                        continue
                     output = event.get("data", {}).get("output")
                     if name in AGENT_TOOLS:
                         agent_result = _summarize_agent_output(output)
@@ -660,6 +688,7 @@ async def chat(req: ChatRequest, request: Request):
                             "inner_tools": agent_result["inner_tools"],
                             "summary": agent_result["summary"],
                             "count": agent_result["count"],
+                            "error": agent_result["error"],
                         })
                     else:
                         summary = _summarize_tool_output(output)

@@ -60,7 +60,9 @@ async def _get_graph():
         async with _graph_lock:
             if _graph is None:
                 tools = await load_sourcing_tools()
-                _graph = build_react_subagent(SOURCING_SYSTEM_PROMPT, tools, max_rounds=4)
+                _graph = build_react_subagent(
+                    SOURCING_SYSTEM_PROMPT, tools, max_rounds=4, name="sourcing",
+                )
     return _graph
 
 

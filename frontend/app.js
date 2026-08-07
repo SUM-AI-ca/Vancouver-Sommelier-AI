@@ -265,7 +265,7 @@ function addAgentBox(toolName, runId) {
   return wrapper;
 }
 
-function completeAgentBox(toolName, runId, innerTools) {
+function completeAgentBox(toolName, runId, innerTools, error) {
   let target = runId
     ? messagesEl.querySelector(`.agent-box[data-run-id="${CSS.escape(runId)}"]`)
     : null;
@@ -277,6 +277,10 @@ function completeAgentBox(toolName, runId, innerTools) {
   if (!target) return;
 
   target.classList.add("done");
+  // A specialist that returned a status="error" envelope must not read as a normal
+  // completion — with no inner tools its result count is 0, which used to fall through
+  // to "completed" and hide the failure behind a green dot.
+  if (error) target.classList.add("failed");
 
   const tools = Array.isArray(innerTools) ? innerTools : [];
   const totalResults = tools.reduce((s, t) => s + (t.count || 0), 0);
@@ -284,9 +288,14 @@ function completeAgentBox(toolName, runId, innerTools) {
 
   const statusEl = target.querySelector(".agent-box-status");
   if (statusEl) {
-    statusEl.textContent = totalResults
-      ? `${totalResults} result${totalResults > 1 ? "s" : ""} from ${sources} source${sources > 1 ? "s" : ""}`
-      : "completed";
+    if (error) {
+      statusEl.textContent = "failed";
+      statusEl.title = error;
+    } else {
+      statusEl.textContent = totalResults
+        ? `${totalResults} result${totalResults > 1 ? "s" : ""} from ${sources} source${sources > 1 ? "s" : ""}`
+        : "completed";
+    }
   }
 
   const panel = target.querySelector(".agent-box-panel");
@@ -319,7 +328,9 @@ function completeAgentBox(toolName, runId, innerTools) {
       });
     });
   } else if (panel) {
-    panel.innerHTML = `<div class="tool-row-empty">No details available.</div>`;
+    panel.innerHTML = error
+      ? `<div class="tool-row-empty">${escapeHtml(error)}</div>`
+      : `<div class="tool-row-empty">No details available.</div>`;
   }
 }
 
@@ -560,7 +571,7 @@ async function sendMessage() {
 
           case "tool_end":
             if (!AGENT_TOOL_NAMES.has(event.tool)) break;
-            completeAgentBox(event.tool, event.run_id, event.inner_tools);
+            completeAgentBox(event.tool, event.run_id, event.inner_tools, event.error);
             activeTools = Math.max(0, activeTools - 1);
             if (activeTools === 0) setStatus("Processing", true);
             break;

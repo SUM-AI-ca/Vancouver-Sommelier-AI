@@ -19,6 +19,8 @@
     --border-color: #ECDFE0;
     --border-subtle: #DCC9CC;
     --chat-surface: #F7EFEF;
+    /* Muted brick — a failed specialist, kept inside the wine palette. */
+    --danger: #B4544F;
 }
 
 html, body {
@@ -691,6 +693,15 @@ a.tool-row:hover {
 
 .agent-box.done .agent-box-indicator {
     background: var(--primary);
+}
+
+/* Must follow the .done rules — same specificity, so source order decides. */
+.agent-box.failed .agent-box-indicator {
+    background: var(--danger);
+}
+
+.agent-box.failed .agent-box-status {
+    color: var(--danger);
 }
 
 .agent-box-chevron {

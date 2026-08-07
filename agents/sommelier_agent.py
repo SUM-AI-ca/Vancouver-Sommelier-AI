@@ -80,7 +80,8 @@ def _get_graph():
     if _graph is None:
         _graph = build_react_subagent(
             SOMMELIER_SYSTEM_PROMPT, SOMMELIER_TOOLS,
-            temperature=0.2, max_rounds=3, model="gemini-3.1-pro-preview",
+            temperature=0.2, max_rounds=3, model="gemini-3.6-flash",
+            name="sommelier",
         )
     return _graph
 

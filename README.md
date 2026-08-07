@@ -3,7 +3,7 @@
 > 2026 Google for Startups AI Agents Challenge — Track 1: Build
 
 A multi-agent AI drinks concierge for the Vancouver market. Built on a LangGraph Supervisor + 3 specialist agent architecture, it searches real-time inventory and pricing across 6 Vancouver-area retail chains (including BC Liquor Stores' 200+ locations province-wide and Everything Wine's 4 Lower Mainland stores), provides expert knowledge via Google Search grounding, and offers food pairing guidance. Supports both B2C (consumer recommendations) and B2B (beverage menu design for F&B businesses).
-Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API) + Cloud SQL Postgres (conversation state). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), retailer tools served over **MCP (Model Context Protocol)** with a public endpoint at `wineaiagent.com/mcp`, FastAPI real-time SSE token streaming with heartbeat keepalive, durable cross-instance conversation persistence (Postgres checkpointer + session-end cleanup + scheduled abandoned-thread sweep), multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, Gemini empty-response guard, grounding deep-link resolution, request timeout + error recovery, LLM-as-judge quality eval pipeline.
+Status: **Production.** Cloudflare Pages (frontend) + Google Cloud Run (backend API) + Cloud SQL Postgres (conversation state). Multi-agent Supervisor + 3 specialists (Sourcing / Sommelier / Menu Architect), retailer tools served over **MCP (Model Context Protocol)** with a public endpoint at `wineaiagent.com/mcp`, FastAPI real-time SSE token streaming with heartbeat keepalive, durable cross-instance conversation persistence (Postgres checkpointer + session-end cleanup + scheduled abandoned-thread sweep), multimodal vision node (wine label / wine list / food menu photo scanning), human-in-the-loop clarification, pre-agent query validation gate, Gemini empty-response guard, transient API-failure retry (499/429/5xx backoff), grounding deep-link resolution, request timeout + error recovery, LLM-as-judge quality eval pipeline.
 
 ---
 
@@ -28,7 +28,7 @@ Validation Gate (validation.py — Gemini Flash)   ※ bypassed when image attac
     ├─ INVALID → reject in user's language → SSE done → end       │
     │                                                             │
     └─ VALID ↓                                                    ↓
-LangGraph Supervisor (agent.py — Gemini 3.5 Flash, max 7 tool rounds)
+LangGraph Supervisor (agent.py — Gemini 3.6 Flash, max 7 tool rounds)
     │
     │   entry_router ─(image)──→ vision_node ─┐
     │                └─(text)────────────────┴→ supervisor
@@ -52,15 +52,18 @@ LangGraph Supervisor (agent.py — Gemini 3.5 Flash, max 7 tool rounds)
     │   │                     single-round batched parallel lookups)       │
     │   │    └─ reasoning_pair_wine, search_web_grounded                  │
     │   │                                                                  │
-    │   │  Menu Architect ─── B2B beverage menu design (max 5 rounds)      │
+    │   │  Menu Architect ─── B2B beverage menu design (max 5 rounds,      │
+    │   │                     course-group sourcing batched in one round)  │
     │   │    └─ sourcing_agent (delegation), search_web_grounded          │
     │   └──────────────────────────────────────────────────────────────────┘
     │
     │   tool_error_to_json — exceptions → status:error (non-fatal)
     │   blank-response retry — Gemini empty-candidate guard (×3 supervisor, ×2 specialists)
+    │   transient-failure retry — 499/429/5xx backoff on every specialist LLM call
     │   supervisor final answer → END
     ↓
 Real-time SSE token streaming (15s heartbeat keepalive) → frontend (tool badges + markdown + PDF export)
+    │   (nested wrapper tool runs suppressed — one event pair per real call)
     │   (final round streamed nothing? → recover answer from checkpoint state)
     ↓
 LangSmith tracing (optional)
@@ -81,16 +84,22 @@ Supervisor + 3 specialist pattern. Each specialist runs as an independent ReAct 
 
 | Agent | Role | Tools | Model |
 |-------|------|-------|-------|
-| **Supervisor** | Query routing, specialist coordination, final answer synthesis, owns clarification | ask_user_clarification + 3 specialist tools | Gemini 3.5 Flash |
-| **Sourcing Agent** | Inventory, pricing, where-to-buy — parallel calls to all 6 retail chains every time | 6 retailer tools (via MCP) | Gemini 3.5 Flash |
-| **Sommelier Agent** | Pairing recs, drinks knowledge, reviews/scores (Google grounding, with citations) | reasoning_pair_wine, search_web_grounded | Gemini 3.1 Pro Preview |
-| **Menu Architect** | (B2B) Design beverage menu from food menu → source real products/prices (direct delegation to Sourcing) | sourcing_agent, search_web_grounded | Gemini 3.1 Pro Preview |
+| **Supervisor** | Query routing, specialist coordination, final answer synthesis, owns clarification | ask_user_clarification + 3 specialist tools | Gemini 3.6 Flash |
+| **Sourcing Agent** | Inventory, pricing, where-to-buy — parallel calls to all 6 retail chains every time | 6 retailer tools (via MCP) | Gemini 3.6 Flash |
+| **Sommelier Agent** | Pairing recs, drinks knowledge, reviews/scores (Google grounding, with citations) | reasoning_pair_wine, search_web_grounded | Gemini 3.6 Flash |
+| **Menu Architect** | (B2B) Design beverage menu from food menu → source real products/prices (direct delegation to Sourcing) | sourcing_agent, search_web_grounded | Gemini 3.6 Flash |
+
+Every agent runs on Gemini 3.6 Flash. The Sommelier and Menu Architect previously ran on Gemini 3.1 Pro Preview; that model was the only source of runtime `499 CANCELLED` failures observed (the same symptom `tests/judge.py` had long carried a retry for), and on Google's published head-to-head 3.6 Flash leads it on every agentic and long-context benchmark — including GDM-MRCR v2 @1M (54.0% vs <27%), which is the metric that matters most here, since both agents must pull the right price and link out of very large tool payloads. `JUDGE_MODEL` stays on 3.1 Pro Preview so eval scores remain comparable across runs.
 
 **Specialist-to-specialist delegation**: The Menu Architect calls `sourcing_agent_tool` directly to source real Vancouver retail products and prices after designing the menu — an in-process hand-off between specialists, without Supervisor mediation. (This is internal LangGraph delegation, not the A2A wire protocol.)
 
 **Multi-turn enforcement**: The Supervisor prompt enforces specialist routing on every turn — when a follow-up asks for a new product category or new recommendations ("also recommend beer", "what about spirits"), it must route to the relevant specialist rather than answering from training knowledge. The "Never invent" rule applies equally on every turn.
 
 **Single-round tool batching (Sommelier)**: A full recommendation typically needs several independent lookups (review searches for the wine, the beer, and the sake picks, plus possibly a pairing-reasoning call). Left to itself, the model issued them one per ReAct round, serializing what LangGraph would happily run in parallel — full-turn latency swung between ~47s and ~110s depending on how many rounds the model chose. The Sommelier prompt now mandates that every independent lookup be emitted **as one batch of tool calls in a single response** (holding a call back only when it genuinely needs a previous call's result), and `max_rounds` was trimmed 4 → 3. Measured effect: ~50s stable full-turn latency with unchanged answer quality.
+
+**Single-round tool batching (Menu Architect)**: The same failure, one layer deeper. The Menu Architect is told to split its sourcing into 2-4 calls by course group, but nothing told it to emit them together — and with `max_rounds=5` the model comfortably spent one round per group. A traced izakaya menu ran its four `sourcing_agent_tool` calls strictly back-to-back (11.9→106s, 117→209s, 214→282s, 295→363s), so 323 of the turn's 443 seconds were sourcing waiting on sourcing. Course groups have no dependency on each other, so the prompt now requires them in one response. Measured effect: **443s → 139s (3.2×)**, 130 → 74 tool calls, with all seven dishes still covered and a longer menu (15.9k → 20.6k chars).
+
+**Category preservation (Supervisor)**: The Sommelier deliberately answers a pairing request across wine, beer, spirit/cocktail, and sake, but the Supervisor's "Answer only what was asked" rule was pruning whole categories during synthesis — an omakase-sushi turn where the Sommelier returned a `Craft Beer` section produced a final answer with zero mentions of beer, and a spicy-Korean-fried-chicken turn dropped beer and sake despite both specialists supplying them. `prompts.py` now states that dropping a category the Sommelier judged relevant is a wrong answer rather than a tighter one, and scopes the older rule to topics the user never raised. Verified by A/B on the omakase prompt: 0/1 categories preserved before, 2/2 after, with no latency cost (89.5s baseline vs 93.6s).
 
 **Pairing-tool guard**: `reasoning_pair_wine_tool` may only be called for a dish/cuisine **the user explicitly named** — never for a dish fabricated from a wine or product name. A product-only query ("synchromesh riesling") is treated as an information request: the Sommelier covers that product's style, profile, and cited reviews (noting suitable food *categories* in prose at most) instead of inventing a meal and branching into every beverage category. Enforced in both the Sommelier system prompt ([`agents/sommelier_agent.py`](agents/sommelier_agent.py)) and the tool docstring ([`agent_tools.py`](agent_tools.py)).
 
@@ -251,6 +260,12 @@ Implementation: `lifespan()` + `end_session` + `cleanup_sessions` in [`app.py`](
 3. **Stream fallback** — `app.py` tracks whether any answer token actually reached the client; if the turn ends with nothing streamed and no pending clarification, it recovers the final AI message from checkpoint state and emits it as a single `final-fallback` token, so the UI never ends on a blank reply.
 
 Verification: `scripts/verify_empty_guard.py` — deterministic stub tests forcing blank responses (asserts the retries recover a real answer) plus a live regression turn.
+
+**Transient API-failure retry.** Gemini intermittently drops a request with `499 CANCELLED`, and less often 429/5xx or a deadline. Because 499 is a 4xx, the SDK classifies it as a client error and does **not** retry it — so a single blip silently deleted an entire specialist's contribution for the turn. `run_subagent_json` caught the exception and returned a `status="error"` envelope, which kept the turn alive but left the Supervisor to answer without that specialist and to apologise for a "technical hiccup" in the user's answer. `models.ainvoke_with_retry` now wraps every specialist LLM call with exponential backoff (`LLM_MAX_ATTEMPTS=3`, 1s doubling) over the same transient-hint list `tests/judge.py` has long used for the eval judge. Non-transient errors re-raise immediately, and `asyncio.CancelledError` — a `BaseException` — passes straight through, so a disconnected client is never retried against.
+
+**One event pair per real tool call.** The Sourcing Agent's retailer tools are `StructuredTool` wrappers around the MCP adapter tools (`mcp_client._flat_tool`), so a single call produced two *nested* runs with the same name and args. Both fired `on_tool_start`/`on_tool_end`, so the SSE stream showed every retailer search twice — and the inner run returns raw content blocks that summarize to zero rows, so the pair even disagreed on the count. (No work was duplicated; only the instrumentation was.) `app.py` now tracks tool run ids and suppresses any tool run whose ancestor chain already contains a run of the same name, emitting only the outermost.
+
+**Failed specialists read as failed.** A `status="error"` envelope carries no inner tools, so its result count was 0 — which fell through to the UI's "completed" label and hid the failure behind a finished-looking badge. `tool_end` now carries an explicit `error` field, and the frontend renders `failed` with the message in the badge tooltip and panel.
 
 ---
 
@@ -421,7 +436,7 @@ Vancouver-Sommelier-AI/
 ├── validation.py               # Pre-agent query validation (off-topic bypass)
 ├── vision.py                   # Multimodal label/wine-list/food-menu extraction (VisionExtraction schema)
 ├── state.py                    # AgentState TypedDict (messages + tool_call_log + vision_extractions)
-├── models.py                   # Gemini LLM factory (3.5 Flash + 3.1 Pro Preview)
+├── models.py                   # Gemini LLM factory (3.6 Flash agents + 3.1 Pro Preview judge) + transient retry
 ├── prompts.py                  # Supervisor/specialist/pairing/relevance-filter/validation/vision prompts
 ├── safety.py                   # tool_error_to_json (tool exceptions → status:error JSON, ToolNode isolation)
 ├── HYPERPARAMETERS.md          # All tuning constants (temperatures, timeouts, limits)
@@ -578,8 +593,8 @@ npx wrangler pages deploy --project-name=bc-wine-ai-agents --branch=main
 
 - **LangGraph** — multi-agent Supervisor + 3 specialist sub-graph orchestration
 - **MCP (Model Context Protocol)** — FastMCP server `vancouver-retailers` (mcp==1.27.2) serving the 6 retailer tools over Streamable HTTP; consumed by the Sourcing Agent via **langchain-mcp-adapters** (0.2.2); public endpoint at `wineaiagent.com/mcp`
-- **Gemini 3.5 Flash** — Supervisor, Sourcing Agent, validation, vision node
-- **Gemini 3.1 Pro Preview** — Sommelier Agent, Menu Architect (advanced reasoning)
+- **Gemini 3.6 Flash** — every agent (Supervisor, Sourcing, Sommelier, Menu Architect) plus validation and the vision node
+- **Gemini 3.1 Pro Preview** — LLM-as-judge only (eval pipeline), kept distinct so the system never grades its own work
 - **Google Search grounding** — reviews/scores/factual knowledge (Gemini Enterprise Agent Platform native)
 - **FastAPI** — SSE streaming backend (15s heartbeat keepalive against proxy idle cuts)
 - **Cloud SQL (PostgreSQL 16)** — durable cross-instance conversation checkpoints via **langgraph-checkpoint-postgres** (`AsyncPostgresSaver`) + **psycopg[binary,pool]**
@@ -620,7 +635,7 @@ Results are saved to `tests/results/<YYYYMMDD-HHMMSS>/` as `results.json`, `summ
 
 ### How it works — LLM-as-Judge
 
-Each turn's final response is scored by a **separate judge model** (Gemini 3.1 Pro Preview, temperature=0) — deliberately distinct from the agent's Gemini 3.5 Flash, so the system never grades its own work. The judge sees the user question, prior turns (for follow-ups), the **complete tool evidence** the agent received, and the final response. It scores five dimensions: **relevance, correctness, helpfulness, coherence, harmlessness** (plus an `overall`).
+Each turn's final response is scored by a **separate judge model** (Gemini 3.1 Pro Preview, temperature=0) — deliberately distinct from the agent's Gemini 3.6 Flash, so the system never grades its own work. The judge sees the user question, prior turns (for follow-ups), the **complete tool evidence** the agent received, and the final response. It scores five dimensions: **relevance, correctness, helpfulness, coherence, harmlessness** (plus an `overall`).
 
 **Correctness is derived, not guessed** (RAGAS-style faithfulness). Instead of asking the judge for a holistic "how correct is this" number, `judge.py` has it extract every **atomic, checkable claim** (price, review score, stock level, vintage, purchase URL, region, ABV, producer fact) and label each one against the evidence:
 

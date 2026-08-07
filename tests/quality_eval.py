@@ -51,6 +51,7 @@ load_dotenv(_PROJECT_ROOT / ".env")
 from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
 
 from agent import get_graph  # noqa: E402
+from models import JUDGE_MODEL, MODEL  # noqa: E402
 from tests.golden_queries import GOLDEN_QUERIES, total_invocations  # noqa: E402
 from tests.judge import judge_response  # noqa: E402
 from tests.metrics import (  # noqa: E402
@@ -773,8 +774,10 @@ async def amain(args) -> int:
         "started_at": started_at.isoformat(),
         "ended_at": ended_at.isoformat(),
         "duration_s": duration,
-        "model": os.environ.get("BC_WINE_MODEL", "gemini-3.5-flash"),
-        "judge_model": "gemini-3.1-pro-preview (temp=0)",
+        # Read from models.py rather than repeating the ids here — a hardcoded copy
+        # silently mislabels a whole run after the model is swapped.
+        "model": os.environ.get("BC_WINE_MODEL", MODEL),
+        "judge_model": f"{JUDGE_MODEL} (temp=0)",
         "n_selected": len(selected),
         "n_completed": len(results),
         "n_total_in_suite": len(GOLDEN_QUERIES),
